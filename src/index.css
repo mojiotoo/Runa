@@ -1,0 +1,117 @@
+:root {
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  --bg: #e9eaff;
+  --panel: #fff;
+  --ink: #24233d;
+  --mute: #79788f;
+  --line: #dddde0;
+  --accent: #f9bbf4 ;
+  --ok: #6bd8bb;
+  --ask: #f7ce97;
+  --bad: #ff708a;
+  --off: #b4b4b7;
+  --selected: #f2f2f2;
+  color: var(--ink);
+  background: transparent;
+  font-family: 'Poppins', system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #17182b;
+    --panel: #22233a;
+    --ink: #f0efff;
+    --mute: #aaa9c1;
+    --line: #393951;
+    --accent: #aaa4ff;
+    --ok: #5fcea9;
+    --ask: #efb75d;
+    --bad: #f08498;
+    --off: #aaa9c1;
+    --selected: #30304e;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #17182b;
+  --panel: #22233a;
+  --ink: #f0efff;
+  --mute: #aaa9c1;
+  --line: #393951;
+  --accent: #b6efff ;
+  --ok: #5fcea9;
+  --ask: #efb75d;
+  --bad: #f08498;
+  --off: #b6efff ;
+  --selected: #30304e;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+html {
+  scroll-padding-top: env(safe-area-inset-top, 0px);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 5% 55%, rgba(182, 239, 255, 0.45), transparent 30%),
+    radial-gradient(circle at 50% 35%, rgba(100, 199, 158, 0.35), transparent 50%),
+    radial-gradient(circle at 80% 55%, rgba(189, 147, 18, 0.4), transparent 28%),
+    #ffffff;
+  color: var(--ink);
+  font: 14px/1.5 'Poppins', system-ui, sans-serif;
+}
+
+body::before {
+  position: fixed;
+  z-index: 0;
+  left: 0;
+  bottom: 0;
+  width: clamp(130px, 23vw, 320px);
+  aspect-ratio: 1;
+  background: url('/batik-bottomcorner-left.png') left bottom / contain no-repeat;
+  content: '';
+  pointer-events: none;
+}
+
+body::after {
+  position: fixed;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  width: clamp(130px, 23vw, 320px);
+  aspect-ratio: 1;
+  background: url('/batik-topcorner-right.png') right top / contain no-repeat;
+  content: '';
+  pointer-events: none;
+}
+
+@media (max-width: 600px) {
+  body::before,
+  body::after {
+    width: clamp(100px, 32vw, 190px);
+  }
+}
+
+button {
+  font: inherit;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+}
