@@ -27,7 +27,29 @@ const SAP_SCHEDULES = [
 
 const WEEK_DAYS = [[28, 'Sen'], [29, 'Sel'], [30, 'Rab'], [1, 'Kam'], [2, 'Jum'], [3, 'Sab']]
 
-const LABELS = { written: 'Written', asked: 'Asked', ignored: 'Ignored', conflict: 'Conflict' }
+const LABELS = { written: 'Written', asked: 'Asked', ignored: 'Ignored', conflict: 'Conflict', handoff: 'Handoff'}
+
+const API = import.meta.env.VITE_RUNA_API || 'http://127.0.0.1:8000'
+
+const STEP_TEXT = {
+  Listener: "Membaca pesan: kejadian bisnis atau obrolan biasa?",
+  Resolver: "Mencocokkan ke delivery di SAP dan memberi dua skor",
+  Rules: "Kode mengecek fakta dan aturan batas.",
+  Transactor: "menulis ke SAP.",
+  "Conflict check" : "Mengecek jadwal dock setelah menulis.", 
+}
+
+function fromRuna(event){
+  return{
+    ...event,
+    media: event.sender === 'Runa' ? 'sistem' : 'text',
+    hedges: event.hedges || [],
+  }
+}
+
+const hasScores = (event) => event.e > 0 || event.v > 0
+
+
 
 function TabIcon({ name }) {
   const paths = {
@@ -56,10 +78,32 @@ function ScoreBar({ label, value }) {
 }
 
 function App() {
-  const [list, setList] = useState(EVENTS)
+  const [list, setList] = useState([])
   const [tab, setTab] = useState('console')
-  const [selectedEvent, setSelectedEvent] = useState(2)
+  const [selectedEvent, setSelectedEvent] = useState(null)
   const [playing, setPlaying] = useState(false)
+  const [live, setLive] = useState(true)
+  const [connected, setConnected] = useState(false)
+
+  useEffect(() =>{
+    if (!live) return
+    let cancelled = false
+    const load = async() => {
+      try{
+        const response = await fetch(`${API}/runa/events`)
+        const events = await response.json()
+        if(!cancelled){
+          setList(events.map(fromRuna))
+          setConnected(true)
+        }
+      } catch {
+        if(!cancelled) setConnected(false)
+      }
+    }
+    load()
+    const timer = setInterval(load, 2000)
+    return () => {cancelled = true; clearInterval(timer)}
+  }, [live])
 
   return (
     <Console
@@ -71,16 +115,20 @@ function App() {
       setSelectedEvent={setSelectedEvent}
       playing={playing}
       setPlaying={setPlaying}
+      live={live}
+      setLive={setLive}
+      connected={connected}
     />
   )
 }
 
-function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying }) {
+function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected }) {
   const timer = useRef(null)
-  const telegramConnected = true
+  const telegramConnected = live ? connected : true
   const [filter, setFilter] = useState('all')
   const [detailTab, setDetailTab] = useState('reasoning')
   const [resolvedConflictIds, setResolvedConflictIds] = useState([])
+  const [doneIds, setDoneIds] = useState([])   // handoffs a supervisor marked as done
   useEffect(() => () => clearInterval(timer.current), [timer])
 
   const count = (decision) => list.filter((event) => event.decision === decision).length
@@ -92,6 +140,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
     return Number(DOCS[docNumber].eta.match(/^(\d{1,2})/)?.[1]) === 1
   }).length
   const replay = () => {
+    setLive(false)
     clearInterval(timer.current)
     setList([])
     setSelectedEvent(null)
@@ -113,27 +162,30 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
 
   const feed = [...list].reverse()
   const pending = list.filter((event) => event.decision === 'asked' && !list.some((later) => later.id > event.id && later.decision === 'written' && later.sender === event.sender))
-  const conflicts = list.filter((event) => event.decision === 'conflict' && !resolvedConflictIds.includes(event.id))
+  const conflicts = list.filter((event) => event.decision === 'conflict' && !resolvedConflictIds.includes(event.id) && !list.some((later) => later.id > event.id && later.decision === 'written' && later.resolved === event.resolved))
+  const handoffs = list.filter((event) => event.decision === 'handoff' && !doneIds.includes(event.id))
+  const needCount = pending.length + conflicts.length + handoffs.length
   const documents = list.filter((event) => event.doc).map((event) => event.doc)
   const event = list.find((item) => item.id === selectedEvent)
   const tabs = [
-    ['console', 'Console', pending.length + conflicts.length],
+    ['console', 'Console', needCount],
     ['calendar', 'Calendar', null],
     ['stats', 'Stats', null],
   ]
 
   const filters = [
     ['all', 'Semua', list.length],
-    ['need', 'Perlu tindakan', pending.length + conflicts.length],
+    ['need', 'Perlu tindakan', needCount],
     ['written', 'Written', count('written')],
     ['asked', 'Asked', pending.length],
     ['conflict', 'Conflict', conflicts.length],
+    ['handoff', 'Handoff', count('handoff')]
     ['ignored', 'Ignored', count('ignored')],
     ['docs', 'Dokumen', documents.length],
   ]
   const visibleEvents = feed.filter((item) => {
     if (filter === 'all') return true
-    if (filter === 'need') return pending.some((pendingEvent) => pendingEvent.id === item.id) || conflicts.some((conflict) => conflict.id === item.id)
+        if (filter === 'need') return [...pending, ...conflicts, ...handoffs].some((open) => open.id === item.id)
     if (filter === 'asked') return pending.some((pendingEvent) => pendingEvent.id === item.id)
     if (filter === 'conflict') return conflicts.some((conflict) => conflict.id === item.id)
     if (filter === 'docs') return Boolean(item.doc)
@@ -197,15 +249,18 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
           {tab === 'calendar' ? <div className="calendar-header-metrics">
             <span><small>Pengiriman hari ini</small><strong>{calendarTodayCount}</strong></span>
             <span><small>Diperbarui oleh Runa</small><strong>{list.length}</strong></span>
-          </div> : <button className="primary" type="button" onClick={replay} disabled={playing}>
-            {playing ? 'Memutar...' : 'Replay skenario'}
-          </button>}
+            </div> : <div className="header-actions">
+              {!live && !playing && <button type="button" onClick={() => { setList([]); setLive(true) }}>Kembali ke live</button>}
+              <button className="primary" type="button" onClick={replay} disabled={playing}>
+                {playing ? 'Memutar...' : 'Replay skenario'}
+            </button>
+          </div>}
         </header>
 
         {tab === 'stats' ? (
           <main className="workspace stats-view">
             <section className="panel main-panel" aria-label="Stats">
-              <StatsDashboard list={list} counts={{ written: count('written'), asked: count('asked'), ignored: count('ignored'), conflict: count('conflict') }} conflicts={conflicts} />
+              <StatsDashboard list={list} counts={{ written: count('written'), asked: count('asked'), ignored: count('ignored'), conflict: count('conflict'), handoff: count('handoff') }} conflicts={conflicts} />
             </section>
           </main>
         ) : tab === 'calendar' ? (
@@ -223,7 +278,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
           </main>
         ) : (
           <main className="console-main">
-            {(pending.length > 0 || conflicts.length > 0) && <section className="action-section">
+              {needCount > 0 && <section className="action-section">
               <h2>Perlu tindakan</h2>
               <div className="action-grid">
                 {pending.map((item) => <button className="action-card action-asked" key={item.id} onClick={() => setSelectedEvent(item.id)}>
@@ -232,8 +287,18 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
                 </button>)}
                 {conflicts.map((item) => <article className="action-card action-conflict" key={item.id}>
                   <strong>{item.text}</strong>
-                  <span>{item.resolved}. Pilih penyelesaian:</span>
-                  <div className="action-options">{item.opts?.map((option) => <button key={option} type="button" onClick={() => resolveConflict(item, option)}>{option}</button>)}</div>
+                  <span>{item.opts ? `${item.resolved}. Pilih penyelesaian:` : `DO ${item.resolved}`}</span>
+                  <div className="action-options">{item.opts
+                    ? item.opts.map((option) => <button key={option} type="button" onClick={() => resolveConflict(item, option)}>{option}</button>)
+                    : <em>Menunggu supervisor membalas "opsi a" atau "opsi b" di Telegram.</em>}</div>
+                </article>)}
+                {handoffs.map((item) => <article className="action-card action-handoff" key={item.id}>
+                  <strong>Diteruskan ke supervisor: pesan dari {item.sender}</strong>
+                  <span>"{item.text}"</span>
+                  <div className="action-options">
+                    <button type="button" onClick={() => { setSelectedEvent(item.id); setDetailTab('reasoning') }}>Lihat alasan</button>
+                    <button type="button" onClick={() => setDoneIds((ids) => [...ids, item.id])}>Tandai selesai</button>
+                  </div>
                 </article>)}
               </div>
             </section>}
@@ -251,7 +316,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
                     <span className="message-body">
                       <span className="meta">{item.ts} - {item.sender}</span>
                       <span className="message-text">{item.text}</span>
-                      <span className="message-tags"><Badge decision={item.decision} />{item.decision !== 'ignored' && <><ScoreBar label="Entity" value={item.e} /><ScoreBar label="Event" value={item.v} /></>}</span>
+                      <span className="message-tags"><Badge decision={item.decision} />{hasScores(item) && <><ScoreBar label="Entity" value={item.e} /><ScoreBar label="Event" value={item.v} /></>}</span>
                     </span>
                   </button>) : <div className="empty">Tidak ada pesan di filter ini.</div>}
                 </div>
@@ -459,10 +524,19 @@ function StatsDashboard({ list, counts, conflicts }) {
     ['Asked', counts.asked, 'var(--stat-asked)'],
     ['Conflict', counts.conflict, 'var(--stat-conflict)'],
     ['Ignored', counts.ignored, 'var(--stat-ignored)'],
+    ['Handoff', counts.handoff, 'var(--stat-handoff)'],
   ]
   const circumference = 2 * Math.PI * 48
   let strokeOffset = 0
-  const slots = ['10:30', '10:35', '10:40', '10:45', '10:50']
+  // Five 5-minute slots ending at the newest message (or now, if there are none)
+  const toMinutes = (ts) => { const [hour, minute] = ts.split(':').map(Number); return hour * 60 + minute }
+  const now = new Date()
+  const newest = list.length ? Math.max(...list.map((event) => toMinutes(event.ts))) : now.getHours() * 60 + now.getMinutes()
+  const lastSlot = Math.floor(newest / 5) * 5
+  const slots = [20, 15, 10, 5, 0].map((back) => {
+    const minutes = (lastSlot - back + 1440) % 1440
+    return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+  })
   const activity = slots.map((label, index) => {
     const [hour, minute] = label.split(':').map(Number)
     const from = hour * 60 + minute
@@ -479,11 +553,25 @@ function StatsDashboard({ list, counts, conflicts }) {
   const totalPath = `M${totalPoints.join(' L')}`
   const writtenPath = `M${writtenPoints.join(' L')}`
   const areaPath = `${totalPath} L376,116 L24,116 Z`
-  const agents = [['Listener', 820], ['Resolver', 1900], ['Transactor', 450]]
-  const suppliers = [
-    ['PT Kemas Jaya', 'KJ', '1 klarifikasi terkait PO yang ambigu'],
-    ['CV Dus Prima', 'DP', 'Kandidat alternatif PO yang ambigu'],
-  ]
+  // Real timings from Runa: average per step, and average total per message
+  const timed = list.filter((event) => event.timings && Object.keys(event.timings).length)
+  const agents = Object.keys(STEP_TEXT).map((name) => {
+    const values = timed.filter((event) => name in event.timings).map((event) => event.timings[name])
+    return [name, values.length ? values.reduce((a, b) => a + b, 0) / values.length : null]
+  }).filter(([, average]) => average !== null)
+  const slowest = Math.max(1, ...agents.map(([, average]) => average))
+  const totals = timed.map((event) => Object.values(event.timings).reduce((a, b) => a + b, 0))
+  const averageResponse = totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : null
+
+  // Which deliveries needed a human or a question most often
+  const unclear = {}
+  list.filter((event) => (event.decision === 'asked' || event.decision === 'handoff') && event.resolved).forEach((event) => {
+    unclear[event.resolved] = unclear[event.resolved] || { asked: 0, handoff: 0 }
+    unclear[event.resolved][event.decision] += 1
+  })
+  const unclearList = Object.entries(unclear)
+    .sort(([, a], [, b]) => (b.asked + b.handoff) - (a.asked + a.handoff))
+    .slice(0, 4)
 
   return (
     <div className="stats-page">
@@ -520,7 +608,7 @@ function StatsDashboard({ list, counts, conflicts }) {
         </section>
 
         <MetricCard label="Pesan hari ini" value={total} note="Pesan yang diproses" />
-        <MetricCard label="Rata-rata respons" value={<>3.2<small> dtk</small></>} note="Listener sampai Transactor" />
+        <MetricCard label="Rata-rata respons" value={averageResponse === null ? '–' : <>{(averageResponse / 1000).toFixed(1)}<small> dtk</small></>} note={totals.length ? `Pesan masuk sampai keputusan, dari ${totals.length} pesan` : 'Belum ada data waktu dari Runa'} />
         <MetricCard className="stat-asked" label="Asked" value={`${total ? Math.round((counts.asked / total) * 100) : 0}%`} note="Memerlukan klarifikasi" />
         <MetricCard className="stat-ignored" label="Ignored" value={`${total ? Math.round((counts.ignored / total) * 100) : 0}%`} note="Tidak perlu tindakan" />
 
@@ -544,28 +632,28 @@ function StatsDashboard({ list, counts, conflicts }) {
           <div className="agent-list">
             {agents.map(([name, milliseconds]) => <div className="agent-row" key={name}>
               <div><span>{name}</span><span>{(milliseconds / 1000).toFixed(2)} dtk</span></div>
-              <div className="agent-track"><i style={{ width: `${(milliseconds / 1900) * 100}%` }} /></div>
+              <div className="agent-track"><i style={{ width: `${(milliseconds / slowest) * 100}%` }} /></div>
             </div>)}
           </div>
-          <p className="stat-note">Tiga agent, tiga batas kepercayaan, satu alur.</p>
+          <p className="stat-note">{agents.length ? 'Rata-rata waktu nyata tiap langkah. Listener dan Resolver adalah AI; Rules dan Transactor adalah kode.' : 'Belum ada data waktu dari Runa.'}</p>
         </section>
 
         <section className="stat-card stat-span-two">
-          <h3>Supplier yang sering perlu klarifikasi</h3>
-          <div className="supplier-list">
-            {suppliers.map(([name, initials, note]) => <div className="supplier-row" key={name}>
-              <span className="supplier-avatar">{initials}</span>
-              <span><b>{name}</b><small>{note}</small></span>
+          <h3>Delivery yang sering perlu klarifikasi</h3>
+          {unclearList.length ? <div className="supplier-list">
+            {unclearList.map(([delivery, { asked, handoff }]) => <div className="supplier-row" key={delivery}>
+              <span className="supplier-avatar">DO</span>
+              <span><b>{delivery}</b><small>{asked} pertanyaan, {handoff} diteruskan ke supervisor</small></span>
             </div>)}
-          </div>
+          </div> : <p className="stat-note">Belum ada delivery yang perlu klarifikasi.</p>}
         </section>
 
         <section className="stat-card stat-conflict stat-span-two">
           <h3>Perlu keputusan manusia</h3>
           {conflicts.length ? conflicts.map((conflict) => <div className="conflict-summary" key={conflict.id}>
             <strong>{conflict.text}</strong>
-            <p className="stat-note">{conflict.resolved}. Pilih salah satu:</p>
-            <div className="conflict-options">{conflict.opts?.map((option) => <span key={option}>{option}</span>)}</div>
+            <p className="stat-note">{conflict.opts ? `${conflict.resolved}. Pilih salah satu:` : `DO ${conflict.resolved}. Menunggu supervisor membalas di Telegram.`}</p>
+            {conflict.opts && <div className="conflict-options">{conflict.opts.map((option) => <span key={option}>{option}</span>)}</div>}
           </div>) : <p className="stat-note">Tidak ada konflik yang menunggu keputusan.</p>}
         </section>
       </div>
@@ -588,6 +676,21 @@ function EventDetail({ event, detailTab }) {
     return event.doc && DOCS[event.doc]
       ? <DocumentDetail number={event.doc} />
       : <div className="empty">Tidak ada dokumen SAP untuk pesan ini.</div>
+  }
+
+    if (detailTab === 'audit' && event.timings) {
+    const steps = Object.entries(event.timings)
+    const total = steps.reduce((sum, [, milliseconds]) => sum + milliseconds, 0)
+    return <div className="detail-content">
+      <h2>Jejak pemrosesan</h2>
+      {steps.length ? <div className="audit-timeline">
+        {steps.map(([agent, milliseconds]) => <div className="audit-step" key={agent}>
+          <div><strong>{agent}</strong><span>{milliseconds} ms</span></div>
+          <p>{STEP_TEXT[agent] || ''}</p>
+        </div>)}
+      </div> : <div className="empty">Dibuat otomatis oleh Runa. Waktunya tercatat di pesan yang memicunya.</div>}
+      {total > 0 && <p className="stat-note">Total {(total / 1000).toFixed(1)} detik dari pesan masuk sampai keputusan.</p>}
+    </div>
   }
 
   if (detailTab === 'audit') {
@@ -622,7 +725,7 @@ function EventDetail({ event, detailTab }) {
       {event.resolved && <><h3>Referensi yang dicocokkan</h3><div>{event.resolved}</div></>}
       {event.cands && <><h3>Kandidat</h3>{event.cands.map(([candidate, score]) => <div key={candidate}>{candidate} ({score})</div>)}</>}
       {event.hedges?.length > 0 && <><h3>Hedge terdeteksi</h3><div>{event.hedges.join(', ')}</div></>}
-      {event.decision !== 'ignored' && <><h3>Skor (threshold: entity 0.85, event 0.75)</h3><div className="scores"><ScoreBar label="Entity" value={event.e} /><ScoreBar label="Event" value={event.v} /></div></>}
+      {hasScores(event) && <><h3>Skor (threshold: 0.85 untuk keduanya)</h3><div className="scores"><ScoreBar label="Entity" value={event.e} /><ScoreBar label="Event" value={event.v} /></div></>}
       <h3>Alasan keputusan</h3><div>{event.note}</div>
       {event.q && <><h3>Pertanyaan ke grup</h3><div className="question">{event.q}</div></>}
       {event.doc && <><h3>Dokumen SAP</h3><div>{event.doc}</div></>}
