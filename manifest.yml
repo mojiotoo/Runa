@@ -1,0 +1,10 @@
+# Runa dashboard on SAP BTP Cloud Foundry.
+# Deploy:  npm run build && cf push
+applications:
+  - name: runa-dashboard
+    memory: 64M
+    instances: 1
+    buildpacks: [staticfile_buildpack]
+    path: dist
+    routes:
+      - route: runa-dashboard-leiva230.cfapps.ap10.hana.ondemand.com
