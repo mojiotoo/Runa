@@ -27,7 +27,7 @@ const SAP_SCHEDULES = [
 
 const WEEK_DAYS = [[28, 'Sen'], [29, 'Sel'], [30, 'Rab'], [1, 'Kam'], [2, 'Jum'], [3, 'Sab']]
 
-const LABELS = { written: 'Written', asked: 'Asked', ignored: 'Ignored', conflict: 'Conflict', handoff: 'Handoff'}
+const LABELS = { written: 'Written', asked: 'Asked', ignored: 'Ignored', conflict: 'Conflict', handoff: 'Handoff', undone: 'Undone' }
 
 const API = import.meta.env.VITE_RUNA_API || 'http://127.0.0.1:8000'
 
@@ -162,7 +162,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
 
   const feed = [...list].reverse()
   const pending = list.filter((event) => event.decision === 'asked' && !list.some((later) => later.id > event.id && later.decision === 'written' && later.sender === event.sender))
-  const conflicts = list.filter((event) => event.decision === 'conflict' && !resolvedConflictIds.includes(event.id) && !list.some((later) => later.id > event.id && later.decision === 'written' && later.resolved === event.resolved))
+  const conflicts = list.filter((event) => event.decision === 'conflict' && !resolvedConflictIds.includes(event.id) && !list.some((later) => later.id > event.id && ['written', 'undone', 'conflict'].includes(later.decision) && later.resolved === event.resolved))
   const handoffs = list.filter((event) => event.decision === 'handoff' && !doneIds.includes(event.id))
   const needCount = pending.length + conflicts.length + handoffs.length
   const documents = list.filter((event) => event.doc).map((event) => event.doc)
@@ -179,7 +179,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
     ['written', 'Written', count('written')],
     ['asked', 'Asked', pending.length],
     ['conflict', 'Conflict', conflicts.length],
-    ['handoff', 'Handoff', count('handoff')]
+    ['handoff', 'Handoff', count('handoff')],
     ['ignored', 'Ignored', count('ignored')],
     ['docs', 'Dokumen', documents.length],
   ]
@@ -260,7 +260,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
         {tab === 'stats' ? (
           <main className="workspace stats-view">
             <section className="panel main-panel" aria-label="Stats">
-              <StatsDashboard list={list} counts={{ written: count('written'), asked: count('asked'), ignored: count('ignored'), conflict: count('conflict'), handoff: count('handoff') }} conflicts={conflicts} />
+              <StatsDashboard list={list} counts={{ written: count('written'), asked: count('asked'), ignored: count('ignored'), conflict: count('conflict'), handoff: count('handoff'), undone: count('undone') }} conflicts={conflicts} />
             </section>
           </main>
         ) : tab === 'calendar' ? (
@@ -525,6 +525,7 @@ function StatsDashboard({ list, counts, conflicts }) {
     ['Conflict', counts.conflict, 'var(--stat-conflict)'],
     ['Ignored', counts.ignored, 'var(--stat-ignored)'],
     ['Handoff', counts.handoff, 'var(--stat-handoff)'],
+    ['Undone', counts.undone, 'var(--stat-undone)'],
   ]
   const circumference = 2 * Math.PI * 48
   let strokeOffset = 0

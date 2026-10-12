@@ -555,6 +555,7 @@
 .badge.conflict { background: color-mix(in srgb, var(--bad) 14%, transparent); }
 .badge.ignored { background: color-mix(in srgb, var(--off) 14%, transparent); }
 .badge.handoff { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.badge.undone { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 
 .calendar-page {
   padding: 18px;
@@ -1125,6 +1126,7 @@
   --stat-conflict: var(--bad);
   --stat-ignored: var(--off);
   --stat-handoff: var(--accent);
+  --stat-undone: color-mix(in srgb, var(--ink) 35%, transparent);
   --stat-area: color-mix(in srgb, var(--ok) 16%, transparent);
   padding: 18px;
 }
@@ -1429,6 +1431,7 @@
 .badge.asked { color: var(--ask); }
 .badge.ignored { color: var(--off); }
 .badge.handoff { color: var(--ink); border-color: var(--accent); }
+.badge.undone { color: var(--ink); border-style: dashed; }
 
 /* Lesson 4: live dashboard */
 .action-handoff {
