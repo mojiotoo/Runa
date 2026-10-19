@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import { BASE_URL, createLivePoller, fetchRunaEvents, localDateKey, mapDeliveriesToCalendar, TELEGRAM_USERNAME } from './sapClient'
 
 const EVENTS = [
   { id: 1, ts: '10:31', sender: 'Andi (Driver)', media: 'text', text: 'ok bos siap', decision: 'ignored', e: 0, v: 0, note: 'Bukan kejadian bisnis.' },
@@ -28,8 +29,6 @@ const SAP_SCHEDULES = [
 const WEEK_DAYS = [[28, 'Sen'], [29, 'Sel'], [30, 'Rab'], [1, 'Kam'], [2, 'Jum'], [3, 'Sab']]
 
 const LABELS = { written: 'Written', asked: 'Asked', ignored: 'Ignored', conflict: 'Conflict', handoff: 'Handoff', undone: 'Undone' }
-
-const API = import.meta.env.VITE_RUNA_API || 'http://127.0.0.1:8000'
 
 const STEP_TEXT = {
   Listener: "Membaca pesan: kejadian bisnis atau obrolan biasa?",
@@ -84,25 +83,32 @@ function App() {
   const [playing, setPlaying] = useState(false)
   const [live, setLive] = useState(true)
   const [connected, setConnected] = useState(false)
+  const [telegramAccount, setTelegramAccount] = useState(null)
+  const [calendarMode, setCalendarMode] = useState('mock')
+  const [realCalendar, setRealCalendar] = useState([])
+  const [realCalendarState, setRealCalendarState] = useState('idle')
+  const firstSeenStarts = useRef(new Map())
 
   useEffect(() =>{
     if (!live) return
     let cancelled = false
-    const load = async() => {
-      try{
-        const response = await fetch(`${API}/runa/events`)
-        const events = await response.json()
-        if(!cancelled){
-          setList(events.map(fromRuna))
-          setConnected(true)
+    const stop = createLivePoller({
+      onData: ({ deliveries, events, telegram }) => {
+        if (cancelled) return
+        setList(events.map(fromRuna))
+        setTelegramAccount(telegram)
+        setRealCalendar(mapDeliveriesToCalendar(deliveries, events, firstSeenStarts.current))
+        setConnected(true)
+        setRealCalendarState('ready')
+      },
+      onError: () => {
+        if (!cancelled) {
+          setConnected(false)
+          setRealCalendarState('reconnecting')
         }
-      } catch {
-        if(!cancelled) setConnected(false)
-      }
-    }
-    load()
-    const timer = setInterval(load, 2000)
-    return () => {cancelled = true; clearInterval(timer)}
+      },
+    })
+    return () => { cancelled = true; stop() }
   }, [live])
 
   return (
@@ -118,27 +124,35 @@ function App() {
       live={live}
       setLive={setLive}
       connected={connected}
+      telegramAccount={telegramAccount}
+      calendarMode={calendarMode}
+      setCalendarMode={setCalendarMode}
+      setRealCalendarState={setRealCalendarState}
+      realCalendar={realCalendar}
+      realCalendarState={realCalendarState}
     />
   )
 }
 
-function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected }) {
+function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected, telegramAccount, calendarMode, setCalendarMode, setRealCalendarState, realCalendar, realCalendarState }) {
   const timer = useRef(null)
   const telegramConnected = live ? connected : true
+  const telegramTitle = telegramAccount?.title || telegramAccount?.name || telegramAccount?.chat_title || telegramAccount?.chatTitle || telegramAccount?.chatName || telegramAccount?.group_name || telegramAccount?.groupName
+  const telegramUsername = telegramAccount?.username || telegramAccount?.user_name || telegramAccount?.bot_username || TELEGRAM_USERNAME
   const [filter, setFilter] = useState('all')
   const [detailTab, setDetailTab] = useState('reasoning')
   const [resolvedConflictIds, setResolvedConflictIds] = useState([])
+  const [resolvedConflicts, setResolvedConflicts] = useState([])
+  const [conflictAction, setConflictAction] = useState({ id: null, status: 'idle', error: '' })
   const [doneIds, setDoneIds] = useState([])   // handoffs a supervisor marked as done
   useEffect(() => () => clearInterval(timer.current), [timer])
 
   const count = (decision) => list.filter((event) => event.decision === decision).length
-  const calendarTodayCount = SAP_SCHEDULES.filter((entry) => entry.day === 1).length + Object.keys(DOCS).filter((docNumber) => {
-    const linkedEvents = list.filter((item) => item.doc === docNumber || item.resolved?.match(/\d{9}/)?.[0] === docNumber)
-    if (!linkedEvents.length) return false
-    const latest = linkedEvents.reduce((current, item) => item.id > current.id ? item : current)
-    if (latest.text.includes('besok 08:00')) return false
-    return Number(DOCS[docNumber].eta.match(/^(\d{1,2})/)?.[1]) === 1
-  }).length
+  const todayKey = localDateKey(new Date())
+  const calendarTodayCount = calendarMode === 'real'
+    ? realCalendar.filter((entry) => entry.dateKey === todayKey).length
+    : SAP_SCHEDULES.filter((entry) => entry.day === 1).length
+  const updatedByRuna = count('written')
   const replay = () => {
     setLive(false)
     clearInterval(timer.current)
@@ -192,22 +206,43 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
     return item.decision === filter
   })
 
-  const resolveConflict = (conflict, option) => {
+  const resolveConflict = async (conflict, option) => {
+    if (conflictAction.status === 'loading') return
+    setConflictAction({ id: conflict.id, status: 'loading', error: '' })
+    try {
+      const response = await fetch(`${BASE_URL}/runa/conflicts/${encodeURIComponent(conflict.id)}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: option }),
+      })
+      if (!response.ok) {
+        const detail = await response.text()
+        throw new Error(detail || `HTTP ${response.status}`)
+      }
+      const events = await fetchRunaEvents()
+      setList(events.map(fromRuna))
+      setResolvedConflictIds((ids) => [...ids, conflict.id])
+      setResolvedConflicts((items) => [...items.filter((item) => item.id !== conflict.id), { ...conflict, option }])
+      setConflictAction({ id: conflict.id, status: 'success', error: '' })
+    } catch (error) {
+      setConflictAction({ id: conflict.id, status: 'error', error: error.message })
+    }
+  }
+  const decideHandoff = (handoff, option) => {
     const nextId = Math.max(0, ...list.map((item) => item.id)) + 1
-    const doc = conflict.resolved.match(/\d{9}/)?.[0]
-    setResolvedConflictIds((ids) => [...ids, conflict.id])
+    setDoneIds((ids) => [...ids, handoff.id])
     setList((items) => [...items, {
       id: nextId,
-      ts: '10:53',
-      sender: 'Runa',
+      ts: handoff.ts,
+      sender: 'Supervisor',
       media: 'sistem',
-      text: `Keputusan manusia: ${option}. Jadwal diperbarui di SAP, konfirmasi dikirim ke grup.`,
+      text: `Keputusan supervisor: ${option}`,
       decision: 'written',
       e: 1,
       v: 1,
-      resolved: conflict.resolved,
-      doc,
-      note: 'Aksi dipilih dari panel Perlu tindakan.',
+      resolved: handoff.resolved,
+      doc: handoff.doc,
+      note: `Pilihan dibuat untuk handoff dari ${handoff.sender}.`,
     }])
     setSelectedEvent(nextId)
   }
@@ -234,8 +269,8 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 3.6 18.4 20c-.2 1.2-.9 1.5-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.2L6 13.5 1 12c-1.1-.3-1.1-1 .2-1.5L20 3.2c.9-.3 1.7.2 1.5.4Z" /></svg>
           </span>
           <span className="telegram-copy">
-            <small>Logistik Gudang Cikarang</small>
-            <small>@runa_ops_bot</small>
+            <small>{telegramTitle || 'Nama grup belum dikirim API'}</small>
+            <small>{telegramUsername ? (telegramUsername.startsWith('@') ? telegramUsername : `@${telegramUsername}`) : 'Identitas tidak dikirim API'}</small>
           </span>
         </section>
       </aside>
@@ -246,9 +281,14 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
             <span className="eyebrow">OPERATIONS OVERVIEW</span>
             <h1>{tab === 'calendar' ? 'Runa Calendar' : tab === 'stats' ? 'Runa Stats' : 'Runa Console'}</h1>
           </div>
-          {tab === 'calendar' ? <div className="calendar-header-metrics">
-            <span><small>Pengiriman hari ini</small><strong>{calendarTodayCount}</strong></span>
-            <span><small>Diperbarui oleh Runa</small><strong>{list.length}</strong></span>
+          {tab === 'calendar' ? <div className="calendar-header-actions">
+            <div className="calendar-mode-switch" role="tablist" aria-label="Calendar source">
+              <button type="button" role="tab" aria-selected={calendarMode === 'mock'} onClick={() => setCalendarMode('mock')}>Mock calendar</button>
+              <button type="button" role="tab" aria-selected={calendarMode === 'real'} onClick={() => { setRealCalendarState('loading'); setCalendarMode('real') }}>Real calendar</button>
+            </div>
+            <span className="calendar-header-counter"><small>Pengiriman hari ini</small><strong>{calendarTodayCount}</strong></span>
+            <span className="calendar-header-counter"><small>Diperbarui oleh Runa</small><strong>{updatedByRuna}</strong></span>
+            <span className="calendar-mode-status">{calendarMode === 'real' ? realCalendarState === 'loading' ? 'Mengambil SAP...' : realCalendarState === 'reconnecting' ? 'Terhubung ulang...' : realCalendarState.startsWith('error:') ? 'SAP tidak terhubung' : 'SAP live' : 'Replay scenario'}</span>
             </div> : <div className="header-actions">
               {!live && !playing && <button type="button" onClick={() => { setList([]); setLive(true) }}>Kembali ke live</button>}
               <button className="primary" type="button" onClick={replay} disabled={playing}>
@@ -268,6 +308,9 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
             <section className="panel main-panel" aria-label="Calendar">
               <CalendarDashboard
                 list={list}
+                calendarMode={calendarMode}
+                realCalendar={realCalendar}
+                realCalendarState={realCalendarState}
                 pending={pending}
                 conflicts={conflicts}
                 selectedEvent={selectedEvent}
@@ -289,15 +332,23 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
                   <strong>{item.text}</strong>
                   <span>{item.opts ? `${item.resolved}. Pilih penyelesaian:` : `DO ${item.resolved}`}</span>
                   <div className="action-options">{item.opts
-                    ? item.opts.map((option) => <button key={option} type="button" onClick={() => resolveConflict(item, option)}>{option}</button>)
+                    ? item.opts.map((option) => <button key={option} type="button" disabled={conflictAction.id === item.id && conflictAction.status === 'loading'} onClick={() => resolveConflict(item, option)}>{conflictAction.id === item.id && conflictAction.status === 'loading' ? 'Mengirim...' : option}</button>)
                     : <em>Menunggu supervisor membalas "opsi a" atau "opsi b" di Telegram.</em>}</div>
+                  {conflictAction.id === item.id && conflictAction.status === 'error' && <p className="action-error" role="alert">Gagal menyelesaikan conflict: {conflictAction.error}</p>}
+                </article>)}
+                {resolvedConflicts.map((item) => <article className="action-card action-resolved" key={`resolved-${item.id}`}>
+                  <strong>Resolved</strong>
+                  <span>{item.resolved}</span>
+                  <p>Supervisor memilih: {item.option}</p>
                 </article>)}
                 {handoffs.map((item) => <article className="action-card action-handoff" key={item.id}>
                   <strong>Diteruskan ke supervisor: pesan dari {item.sender}</strong>
                   <span>"{item.text}"</span>
                   <div className="action-options">
                     <button type="button" onClick={() => { setSelectedEvent(item.id); setDetailTab('reasoning') }}>Lihat alasan</button>
-                    <button type="button" onClick={() => setDoneIds((ids) => [...ids, item.id])}>Tandai selesai</button>
+                    {item.opts?.length
+                      ? item.opts.map((option, index) => <button key={option} type="button" onClick={() => decideHandoff(item, `${String.fromCharCode(65 + index)}. ${option}`)}>{String.fromCharCode(65 + index)}. {option}</button>)
+                      : <em>Runa belum memberikan opsi keputusan untuk handoff ini.</em>}
                   </div>
                 </article>)}
               </div>
@@ -336,13 +387,19 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
   )
 }
 
-function CalendarDashboard({ list, pending, conflicts, selectedEvent, onSelectEvent, onOpenConsole }) {
+function CalendarDashboard(props) {
+  return props.calendarMode === 'real'
+    ? <RealCalendarDashboard entries={props.realCalendar} events={props.list} state={props.realCalendarState} onOpenConsole={props.onOpenConsole} />
+    : <MockCalendarDashboard {...props} />
+}
+
+function MockCalendarDashboard({ list, calendarMode, realCalendar, realCalendarState, pending, conflicts, selectedEvent, onSelectEvent, onOpenConsole }) {
   const [mode, setMode] = useState('week')
   const [selectedDay, setSelectedDay] = useState(1)
   const [activeEntryId, setActiveEntryId] = useState(null)
   const [search, setSearch] = useState('')
 
-  const liveEntries = Object.keys(DOCS).flatMap((docNumber) => {
+  const mockEntries = Object.keys(DOCS).flatMap((docNumber) => {
     const relatedEvents = list.filter((event) => {
       const linkedDoc = event.doc || event.resolved?.match(/\d{9}/)?.[0]
       return linkedDoc === docNumber
@@ -374,7 +431,8 @@ function CalendarDashboard({ list, pending, conflicts, selectedEvent, onSelectEv
     }]
   })
 
-  const entries = [...SAP_SCHEDULES, ...liveEntries]
+  const realEntries = realCalendar
+  const entries = calendarMode === 'real' ? realEntries : [...SAP_SCHEDULES, ...mockEntries]
   const searchMatches = search.trim()
     ? entries.filter((entry) => entry.sourceEventId && `${entry.doc} ${entry.title} ${entry.sub} ${entry.source?.text || ''}`.toLowerCase().includes(search.trim().toLowerCase()))
     : []
@@ -399,6 +457,8 @@ function CalendarDashboard({ list, pending, conflicts, selectedEvent, onSelectEv
 
   return (
     <div className="calendar-page">
+      {calendarMode === 'real' && realCalendarState.startsWith('error:') && <div className="calendar-muted" role="alert">SAP calendar tidak dapat dimuat. Periksa koneksi Runa.</div>}
+      {calendarMode === 'real' && realCalendarState === 'ready' && !entries.length && <div className="calendar-muted">Tidak ada PO atau delivery terjadwal dari SAP.</div>}
       <form className="calendar-search" role="search" onSubmit={(submitEvent) => {
         submitEvent.preventDefault()
         if (searchMatches[0]) onOpenConsole(searchMatches[0].sourceEventId, 'reasoning')
@@ -505,6 +565,131 @@ function CalendarDashboard({ list, pending, conflicts, selectedEvent, onSelectEv
                 {selectedEntry.sourceEventId && <button type="button" className="calendar-open-detail" onClick={() => onOpenConsole(selectedEntry.sourceEventId, 'document')}>Buka detail</button>}
             </> : <p className="calendar-muted">Pilih jadwal untuk melihat detail dan sumber perubahan.</p>}
           </section>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RealCalendarDashboard({ entries, events, state, onOpenConsole }) {
+  const GRID_START = 6 * 60
+  const PIXELS_PER_MINUTE = 32 / 60
+  const [view, setView] = useState('week')
+  const [anchorDate, setAnchorDate] = useState(null)
+  const [selectedDate, setSelectedDate] = useState(null)
+  const [selectedId, setSelectedId] = useState(null)
+  const [search, setSearch] = useState('')
+  const scrollRef = useRef(null)
+
+  const toDate = (key) => new Date(`${key}T00:00:00`)
+  const toKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  const addDays = (date, amount) => {
+    const next = new Date(date)
+    next.setDate(next.getDate() + amount)
+    return next
+  }
+  const startOfWeek = (date) => {
+    const start = new Date(date)
+    const day = start.getDay() || 7
+    start.setDate(start.getDate() - day + 1)
+    return start
+  }
+  const earliestDate = entries.length ? toDate([...entries].sort((a, b) => a.dateKey.localeCompare(b.dateKey))[0].dateKey) : new Date()
+
+  useEffect(() => {
+    if (!entries.length) return
+    const current = anchorDate && (view === 'month' ? entries.some((entry) => entry.dateKey.startsWith(`${anchorDate.getFullYear()}-${String(anchorDate.getMonth() + 1).padStart(2, '0')}`)) : entries.some((entry) => entry.dateKey === toKey(anchorDate) || (view === 'week' && entry.dateKey >= toKey(startOfWeek(anchorDate)) && entry.dateKey <= toKey(addDays(startOfWeek(anchorDate), 6)))))
+    if (!current) {
+      setAnchorDate(earliestDate)
+      setSelectedDate(toKey(earliestDate))
+    }
+  }, [entries, view])
+
+  useEffect(() => {
+    if (!scrollRef.current || !entries.length || view === 'month') return
+    const todayKey = localDateKey(new Date())
+    const visibleToday = entries.filter((entry) => entry.dateKey === todayKey)
+    const earliest = Math.min(...(visibleToday.length ? visibleToday : entries).map((entry) => entry.startMinutes))
+    scrollRef.current.scrollTop = Math.max(0, (earliest - GRID_START) * PIXELS_PER_MINUTE - 48)
+  }, [entries, view])
+
+  const activeDate = anchorDate || earliestDate
+  const weekStart = startOfWeek(activeDate)
+  const dayKeys = view === 'day'
+    ? [selectedDate || toKey(activeDate)]
+    : Array.from({ length: 7 }, (_, index) => toKey(addDays(weekStart, index)))
+  const monthStart = new Date(activeDate.getFullYear(), activeDate.getMonth(), 1)
+  const monthOffset = (monthStart.getDay() || 7) - 1
+  const monthDays = new Date(activeDate.getFullYear(), activeDate.getMonth() + 1, 0).getDate()
+  const monthCells = Array.from({ length: monthOffset + monthDays }, (_, index) => index < monthOffset ? null : index - monthOffset + 1)
+  const query = search.trim().toLowerCase()
+  const matches = (entry) => !query || `${entry.inboundDelivery} ${entry.title} ${entry.material} ${entry.subtitle} ${entry.latestEvent?.text || ''}`.toLowerCase().includes(query)
+  const entriesFor = (key) => entries.filter((entry) => entry.dateKey === key)
+  const closeFor = (key) => Math.min(...entriesFor(key).map((entry) => entry.closeMinutes))
+  const selectedEntry = entries.find((entry) => entry.id === selectedId) || null
+  const statusLabel = { scheduled: 'Jadwal SAP', written: 'Ditulis Runa', asked: 'Menunggu jawaban', conflict: 'Konflik' }
+  const move = (amount) => {
+    const next = view === 'month' ? new Date(activeDate.getFullYear(), activeDate.getMonth() + amount, 1) : addDays(activeDate, view === 'week' ? amount * 7 : amount)
+    setAnchorDate(next)
+    setSelectedDate(toKey(next))
+  }
+  const selectDate = (key) => {
+    const date = toDate(key)
+    setAnchorDate(date)
+    setSelectedDate(key)
+    setView('day')
+  }
+  const focusEvent = (event) => {
+    const entry = event.resolved && entries.find((item) => item.inboundDelivery === event.resolved)
+    if (entry) {
+      setSelectedId(entry.id)
+      selectDate(entry.dateKey)
+      window.setTimeout(() => setSelectedId(null), 1800)
+    }
+    if (event.resolved) onOpenConsole(event.id, 'reasoning')
+  }
+  const timeLabels = Array.from({ length: 10 }, (_, index) => 6 + index * 2)
+
+  return (
+    <div className="calendar-page real-calendar-page">
+      {state === 'reconnecting' && <div className="calendar-muted" role="status">Terhubung ulang... Menampilkan data SAP terakhir.</div>}
+      {state === 'ready' && !entries.length && <div className="calendar-muted">Tidak ada inbound delivery dari SAP.</div>}
+      <form className="calendar-search" role="search" onSubmit={(event) => event.preventDefault()}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></svg>
+        <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari delivery, supplier, material, atau event..." aria-label="Cari delivery atau event" />
+      </form>
+      <div className="calendar-layout">
+        <aside className="calendar-sidebar">
+          <section className="calendar-widget mini-calendar-widget">
+            <h3>{activeDate.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</h3>
+            <div className="mini-calendar-grid">
+              {['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((label) => <span className="mini-weekday" key={label}>{label}</span>)}
+              {monthCells.map((day, index) => day === null ? <span key={`empty-${index}`} /> : <button key={day} type="button" className={`${day === activeDate.getDate() ? 'selected-day' : ''} ${entriesFor(toKey(new Date(activeDate.getFullYear(), activeDate.getMonth(), day))).length ? 'has-calendar-event' : ''}`} onClick={() => selectDate(toKey(new Date(activeDate.getFullYear(), activeDate.getMonth(), day)))}>{day}{entriesFor(toKey(new Date(activeDate.getFullYear(), activeDate.getMonth(), day))).length > 0 && <i />}</button>)}
+            </div>
+          </section>
+          <section className="calendar-widget">
+            <h3>Perubahan oleh Runa</h3>
+            {events.filter((event) => ['written', 'asked'].includes(event.decision)).slice().reverse().filter((event) => !query || `${event.text} ${event.resolved || ''} ${event.q || ''}`.toLowerCase().includes(query)).map((event) => <button className="calendar-log" key={event.id} onClick={() => focusEvent(event)}>
+              <i className={`log-dot ${event.decision}`} /><span><b>{event.ts}</b> {event.decision === 'asked' ? event.q || event.text : event.text}</span>
+            </button>)}
+          </section>
+        </aside>
+        <div className="calendar-main">
+          <section className="calendar-board">
+            <div className="calendar-boardbar">
+              <strong>{view === 'month' ? activeDate.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }) : view === 'day' ? activeDate.toLocaleDateString('id-ID', { dateStyle: 'medium' }) : `Minggu ${weekStart.toLocaleDateString('id-ID')} - ${addDays(weekStart, 6).toLocaleDateString('id-ID')}`}</strong>
+              <div className="calendar-legend">{[['written', 'Ditulis Runa'], ['asked', 'Menunggu jawaban'], ['conflict', 'Konflik'], ['scheduled', 'Jadwal SAP']].map(([key, label]) => <span className={`legend-${key}`} key={key}>{label}</span>)}</div>
+            </div>
+            <div className="calendar-view-switch" role="tablist" aria-label="Calendar view">
+              {[['day', 'Harian'], ['week', 'Mingguan'], ['month', 'Bulanan']].map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={view === key} onClick={() => setView(key)}>{label}</button>)}
+              <button type="button" onClick={() => move(-1)} aria-label="Sebelumnya">‹</button><button type="button" onClick={() => move(1)} aria-label="Berikutnya">›</button>
+            </div>
+            {view === 'month' ? <div className="calendar-month-grid">
+              {['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((label) => <span className="month-weekday" key={label}>{label}</span>)}
+              {monthCells.map((day, index) => day === null ? <span key={`blank-${index}`} /> : <button key={day} type="button" className={`month-day ${day === activeDate.getDate() ? 'selected-day' : ''}`} onClick={() => selectDate(toKey(new Date(activeDate.getFullYear(), activeDate.getMonth(), day)))}><b>{day}</b>{entriesFor(toKey(new Date(activeDate.getFullYear(), activeDate.getMonth(), day))).map((entry) => <span className={`month-event ${entry.status} ${matches(entry) ? '' : 'calendar-dimmed'}`} key={entry.id}>{entry.title}</span>)}</button>)}
+            </div> : <div className="calendar-scroll" ref={scrollRef}><div className="schedule-grid real-schedule-grid" style={{ '--calendar-day-count': dayKeys.length }}><div className="schedule-corner" />{dayKeys.map((key) => <button key={key} type="button" className={`schedule-day-heading ${key === selectedDate ? 'current-day' : ''}`} onClick={() => selectDate(key)}><strong>{toDate(key).getDate()}</strong><small>{toDate(key).toLocaleDateString('id-ID', { weekday: 'short' })}</small></button>)}<div className="schedule-time-rail">{timeLabels.map((hour) => <span key={hour} style={{ top: `${(hour * 60 - GRID_START) * PIXELS_PER_MINUTE}px` }}>{String(hour).padStart(2, '0')}:00</span>)}</div>{dayKeys.map((key) => <div className="schedule-day-column" key={key}>{entriesFor(key).length > 0 && <div className="schedule-dock-line" style={{ top: `${(closeFor(key) - GRID_START) * PIXELS_PER_MINUTE}px` }}><em>Dock tutup {formatCalendarTime(closeFor(key) / 60)}</em></div>}{entriesFor(key).map((entry) => <div key={entry.id} className={`calendar-event ${entry.status} ${matches(entry) ? '' : 'calendar-dimmed'} ${selectedId === entry.id ? 'selected-event' : ''}`} style={{ top: `${(entry.startMinutes - GRID_START) * PIXELS_PER_MINUTE}px`, height: `${Math.max(32, (entry.endMinutes - entry.startMinutes) * PIXELS_PER_MINUTE)}px` }} title={`${entry.material} · ${entry.quantity} ${entry.unit} · ${entry.route} · ${entry.carrierContact}`} onClick={() => setSelectedId(entry.id)}><b>{entry.title}</b><span>{formatCalendarTime(entry.startMinutes / 60)} - {formatCalendarTime(entry.endMinutes / 60)}</span><small>{entry.subtitle}</small>{entry.ghostStartMinutes !== null && <i className="calendar-ghost">semula {formatCalendarTime(entry.ghostStartMinutes / 60)}</i>}</div>)}</div>)}</div></div>}
+          </section>
+          <section className="calendar-selection">{selectedEntry ? <><div><span className={`calendar-status ${selectedEntry.status}`}>{statusLabel[selectedEntry.status]}</span><h3>{selectedEntry.title}</h3><p>{selectedEntry.subtitle}</p><p className="calendar-muted">{selectedEntry.material} · {selectedEntry.quantity} {selectedEntry.unit} · {selectedEntry.route} · {selectedEntry.carrierContact}</p></div>{selectedEntry.latestEvent?.id && <button type="button" className="calendar-open-detail" onClick={() => onOpenConsole(selectedEntry.latestEvent.id, 'reasoning')}>Buka event</button>}</> : <p className="calendar-muted">Pilih delivery untuk melihat detail SAP.</p>}</section>
         </div>
       </div>
     </div>
