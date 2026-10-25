@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import LogView from './LogView'
 
 const EVENTS = [
   { id: 1, ts: '10:31', sender: 'Andi (Driver)', media: 'text', text: 'ok bos siap', decision: 'ignored', e: 0, v: 0, note: 'Bukan kejadian bisnis.' },
@@ -37,6 +38,7 @@ const STEP_TEXT = {
   Rules: "Kode mengecek fakta dan aturan batas.",
   Transactor: "menulis ke SAP.",
   "Conflict check" : "Mengecek jadwal dock setelah menulis.", 
+  Notebook: 'Mengusulkan catatan baru dari jawaban yang didapat.',
 }
 
 function fromRuna(event){
@@ -45,6 +47,15 @@ function fromRuna(event){
     media: event.sender === 'Runa' ? 'sistem' : 'text',
     hedges: event.hedges || [],
   }
+}
+
+// Did this event settle a delivery's schedule? A new arrival time, a
+// supervisor's option, or an undo of either (not a shortage or a complaint).
+const closesSchedule = (event) => {
+  const note = event.note || ''
+  if (event.media === 'sistem') return event.decision === 'written'   // demo replay
+  return note.startsWith('Patched arrival time') || note.startsWith('Executed option')
+    || (event.decision === 'undone' && (note.includes('estimasi tiba') || note.includes('opsi')))
 }
 
 const hasScores = (event) => event.e > 0 || event.v > 0
@@ -60,6 +71,8 @@ function TabIcon({ name }) {
     docs: <><path d="M7 3.5h7l4 4V20H7z" /><path d="M14 3.5V8h4M10 12h5M10 16h5" /></>,
     conf: <><path d="m12 3 9 17H3z" /><path d="M12 9v4M12 16h.01" /></>,
     stats: <><path d="M4 19V5M4 19h16" /><path d="M8 15v-4M12 15V7M16 15V9" /></>,
+    notebook: <><path d="M6 3.5h11a1 1 0 0 1 1 1V20.5H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 1-2z" /><path d="M5 18.5a2 2 0 0 1 2-2h11M9 8h6M9 11.5h4" /></>,
+    log: <><path d="M8 6h12M8 12h12M8 18h12" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></>,
   }
 
   return <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
@@ -84,6 +97,7 @@ function App() {
   const [playing, setPlaying] = useState(false)
   const [live, setLive] = useState(true)
   const [connected, setConnected] = useState(false)
+  const [notes, setNotes] = useState([])        // Runa's notebook
 
   useEffect(() =>{
     if (!live) return
@@ -96,6 +110,11 @@ function App() {
           setList(events.map(fromRuna))
           setConnected(true)
         }
+        // The notebook, read the same way. An older runa-sap has none: skip it.
+        try {
+          const book = await (await fetch(`${API}/runa/notebook`)).json()
+          if (!cancelled && Array.isArray(book)) setNotes(book)
+        } catch { /* no notebook yet */ }
       } catch {
         if(!cancelled) setConnected(false)
       }
@@ -118,11 +137,12 @@ function App() {
       live={live}
       setLive={setLive}
       connected={connected}
+      notes={notes}
     />
   )
 }
 
-function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected }) {
+function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected, notes }) {
   const timer = useRef(null)
   const telegramConnected = live ? connected : true
   const [filter, setFilter] = useState('all')
@@ -162,7 +182,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
 
   const feed = [...list].reverse()
   const pending = list.filter((event) => event.decision === 'asked' && !list.some((later) => later.id > event.id && later.decision === 'written' && later.sender === event.sender))
-  const conflicts = list.filter((event) => event.decision === 'conflict' && !resolvedConflictIds.includes(event.id) && !list.some((later) => later.id > event.id && ['written', 'undone', 'conflict'].includes(later.decision) && later.resolved === event.resolved))
+  const conflicts = list.filter((event) => event.decision === 'conflict' && !resolvedConflictIds.includes(event.id) && !list.some((later) => later.id > event.id && later.resolved === event.resolved && (later.decision === 'conflict' || closesSchedule(later))))
   const handoffs = list.filter((event) => event.decision === 'handoff' && !doneIds.includes(event.id))
   const needCount = pending.length + conflicts.length + handoffs.length
   const documents = list.filter((event) => event.doc).map((event) => event.doc)
@@ -171,6 +191,8 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
     ['console', 'Console', needCount],
     ['calendar', 'Calendar', null],
     ['stats', 'Stats', null],
+    ['notebook', 'Catatan', notes.filter((note) => note.status === 'proposed').length],
+    ['log', 'Log', null],
   ]
 
   const filters = [
@@ -244,12 +266,12 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
         <header className="topbar">
           <div className="page-heading">
             <span className="eyebrow">OPERATIONS OVERVIEW</span>
-            <h1>{tab === 'calendar' ? 'Runa Calendar' : tab === 'stats' ? 'Runa Stats' : 'Runa Console'}</h1>
+            <h1>{tab === 'calendar' ? 'Runa Calendar' : tab === 'stats' ? 'Runa Stats' : tab === 'notebook' ? 'Runa Notebook' : tab === 'log' ? 'Runa Log' : 'Runa Console'}</h1>
           </div>
           {tab === 'calendar' ? <div className="calendar-header-metrics">
             <span><small>Pengiriman hari ini</small><strong>{calendarTodayCount}</strong></span>
             <span><small>Diperbarui oleh Runa</small><strong>{list.length}</strong></span>
-            </div> : <div className="header-actions">
+            </div> : tab === 'log' ? null : <div className="header-actions">
               {!live && !playing && <button type="button" onClick={() => { setList([]); setLive(true) }}>Kembali ke live</button>}
               <button className="primary" type="button" onClick={replay} disabled={playing}>
                 {playing ? 'Memutar...' : 'Replay skenario'}
@@ -257,7 +279,15 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
           </div>}
         </header>
 
-        {tab === 'stats' ? (
+        {tab === 'log' ? (
+          <LogView api={API} events={list} />
+        ) : tab === 'notebook' ? (
+          <main className="workspace stats-view">
+            <section className="panel main-panel" aria-label="Notebook">
+              <NotebookPanel notes={notes} />
+            </section>
+          </main>
+        ) : tab === 'stats' ? (
           <main className="workspace stats-view">
             <section className="panel main-panel" aria-label="Stats">
               <StatsDashboard list={list} counts={{ written: count('written'), asked: count('asked'), ignored: count('ignored'), conflict: count('conflict'), handoff: count('handoff'), undone: count('undone') }} conflicts={conflicts} />
@@ -660,6 +690,42 @@ function StatsDashboard({ list, counts, conflicts }) {
       </div>
     </div>
   )
+}
+
+// Runa's notebook: what it knows about this company, and what it has learned.
+const NOTE_SOURCE = { seed: 'Bawaan', supervisor: 'Ditulis supervisor', learned: 'Dipelajari Runa' }
+
+function NotebookPanel({ notes }) {
+  const groups = [
+    ['proposed', 'Menunggu persetujuan', 'Supervisor membalas /setuju atau /tolak di Telegram.'],
+    ['approved', 'Dipakai Runa', 'Catatan ini membantu Runa mengenali orang, rute dan delivery.'],
+    ['rejected', 'Ditolak', 'Tetap tercatat, tapi tidak pernah dipakai.'],
+    ['removed', 'Dihapus', 'Tidak dipakai lagi.'],
+  ]
+  const learned = notes.filter((note) => note.source === 'learned' && note.status === 'approved').length
+
+  return <div className="notebook-page">
+    <section className="stat-card notebook-intro">
+      <h3>Buku catatan Runa</h3>
+      <p className="stat-note">Runa mengusulkan catatan dari jawaban di obrolan. Hanya catatan yang disetujui supervisor yang dipakai.
+        Catatan membantu Runa tahu <b>delivery yang mana</b>; aturan dan batas tetap di kode.</p>
+      <p className="stat-note"><b>{learned}</b> catatan dipelajari dari obrolan dan disetujui.</p>
+    </section>
+    {groups.map(([status, title, hint]) => {
+      const items = notes.filter((note) => note.status === status)
+      if (!items.length && status !== 'approved') return null
+      return <section className={`stat-card notebook-group notebook-${status}`} key={status}>
+        <h3>{title} <span className="notebook-count">{items.length}</span></h3>
+        <p className="stat-note">{hint}</p>
+        {items.length ? items.map((note) => <div className="notebook-row" key={note.id}>
+          <span className="notebook-id">#{note.id}</span>
+          <span className="notebook-text">{note.text}
+            <small>{NOTE_SOURCE[note.source] || note.source}{note.reviewed_by && note.source !== 'seed' ? ` · ${note.status === 'approved' ? 'disetujui' : 'oleh'} ${note.reviewed_by}` : ''}</small>
+          </span>
+        </div>) : <p className="stat-note">Belum ada.</p>}
+      </section>
+    })}
+  </div>
 }
 
 function MetricCard({ className = '', label, value, note }) {

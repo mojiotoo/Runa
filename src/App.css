@@ -1773,3 +1773,50 @@ tbody tr:hover td,
     margin-left: auto;
   }
 }
+
+/* Runa's notebook */
+.notebook-page {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.notebook-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notebook-count {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.notebook-proposed {
+  background: color-mix(in srgb, var(--ask) 14%, rgba(255, 255, 255, 0.8));
+}
+
+.notebook-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.notebook-row:last-child { border-bottom: 0; }
+
+.notebook-id {
+  min-width: 34px;
+  font-weight: 600;
+  color: var(--stat-brand);
+}
+
+.notebook-text small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  opacity: 0.7;
+}
