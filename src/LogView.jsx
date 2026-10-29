@@ -1,25 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import './LogView.css'
+import { STAGES, STAGE_LABEL, FIELD_LABEL, short, whenLocal, arrival, valueText, flagsFor, latestNote, originalPlan } from './warehouse'
 
 // The warehouse log: where every delivery is, and everything that changed.
 // Data: runa-sap's /_debug/state (deliveries, documents) and /runa/log (the
 // log runa-sap writes itself on every SAP change, decision, undo, conflict
-// and note). Read-only; refreshed every 2 seconds like the rest.
+// and note), read by useWarehouse in App and passed in. Read-only.
 
-const STAGES = [
-  ['PRODUCTION', 'Diproduksi'], ['PACKING', 'Dikemas'], ['READY', 'Siap kirim'],
-  ['IN_TRANSIT', 'Dalam perjalanan'], ['AT_GATE', 'Di gerbang'], ['UNLOADING', 'Dibongkar'],
-  ['RECEIVED', 'Diterima'],
-]
-const STAGE_LABEL = Object.fromEntries(STAGES)
-const STATUS_LABEL = {
-  Planned: 'Terjadwal', 'In transit': 'Dalam perjalanan', Delayed: 'Terlambat', Early: 'Lebih cepat',
-  Rescheduled: 'Dijadwal ulang', Received: 'Diterima',
-}
-const FIELD_LABEL = {
-  PlannedGoodsReceipt: 'estimasi tiba', Status: 'status', Stage: 'tahap',
-  DockClosingTime: 'dock tutup', CarrierContact: 'supir', ReceivingDock: 'dock',
-}
 const KIND = {
   sap: ['SAP', 'sap'], decision: ['KEPUTUSAN', 'dec'], undo: ['DIBATALKAN', 'undo'],
   conflict: ['KONFLIK', 'bad'], problem: ['PERLU PERHATIAN', 'bad'], chat: ['DARI GRUP', 'chat'],
@@ -27,67 +14,11 @@ const KIND = {
 const FILTERS = [
   ['all', 'Semua'], ['sap', 'Ditulis ke SAP'], ['chat', 'Dari grup'], ['problem', 'Masalah'], ['undo', 'Dibatalkan'],
 ]
-// The demo story takes place on this day (the seed data matches it).
-const TODAY = import.meta.env.VITE_RUNA_TODAY || '2026-09-09'
-
-const short = (did) => (did || '').replace(/^0+80+/, '').slice(-4) || did
-const whenLocal = (iso) => {
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
-}
 const dayLocal = (iso) => {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   const label = d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' })
   return d.toDateString() === new Date().toDateString() ? `Hari ini · ${label}` : label
-}
-function arrival(iso) {
-  if (!iso) return '-'
-  const [date, time] = iso.split('T')
-  if (date === TODAY) return time.slice(0, 5)
-  const [y, m, d] = TODAY.split('-').map(Number)
-  const tomorrow = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
-  if (date === tomorrow) return `Besok ${time.slice(0, 5)}`
-  return `${date.slice(8, 10)}/${date.slice(5, 7)} ${time.slice(0, 5)}`
-}
-const valueText = (field, value) => {
-  if (value === null || value === undefined || value === '') return '—'
-  if (field === 'PlannedGoodsReceipt') return arrival(value)
-  if (field === 'Stage') return STAGE_LABEL[value] || value
-  if (field === 'Status') return STATUS_LABEL[value] || value
-  return String(value)
-}
-
-function flagsFor(d, state, log) {
-  const did = d.InboundDelivery
-  const flags = []
-  if (d.Status === 'Delayed') flags.push(['TERLAMBAT', 'bad'])
-  if (d.Status === 'Rescheduled') flags.push(['DIJADWAL ULANG', 'warn'])
-  const missing = (state.material_documents || [])
-    .filter((m) => m.InboundDelivery === did && !m.ReversalDocument && !m.ReversedMaterialDocument)
-    .reduce((sum, m) => sum + Number(m.QuantityInDeliveryUnit || 0), 0)
-  if (missing > 0) flags.push([`KURANG ${missing}`, "bad"])
-  if ((state.quality_notifications || []).some((q) => q.InboundDelivery === did && q.NotificationStatus !== 'CANCELLED'))
-    flags.push(['KELUHAN KUALITAS', 'bad'])
-  const mine = log.filter((e) => e.delivery === did)           // newest first
-  const conflict = mine.findIndex((e) => e.kind === 'conflict')
-  const settled = mine.findIndex((e) => e.kind === 'decision' || (e.kind === 'sap' && e.changes?.PlannedGoodsReceipt))
-  if (conflict !== -1 && (settled === -1 || conflict < settled)) flags.push(['MENUNGGU KEPUTUSAN', 'bad'])
-  const problem = mine.find((e) => e.kind === 'problem')
-  if (problem && !flags.length) flags.push(['PERLU PERHATIAN', 'warn'])
-  return flags
-}
-
-function latestNote(did, log, events) {
-  const entry = log.find((e) => e.delivery === did && e.source?.text && e.source?.sender && e.source.sender !== 'Runa')
-  if (entry) {
-    const what = entry.kind === 'decision' ? `keputusan ${entry.source.option || ''}`.trim()
-      : entry.kind === 'undo' ? 'dibatalkan' : entry.kind === 'problem' ? entry.summary
-        : entry.changes ? Object.keys(entry.changes).map((f) => FIELD_LABEL[f] || f).join(', ') + ' diubah' : entry.summary
-    return { text: entry.source.text, who: entry.source.sender, at: whenLocal(entry.at), what }
-  }
-  const event = [...events].reverse().find((e) => e.resolved === did && e.sender !== 'Runa')
-  return event ? { text: event.text, who: event.sender, at: event.ts, what: '' } : null
 }
 
 function EntryLine({ entry }) {
@@ -128,42 +59,17 @@ function entryFoot(entry) {
   return ''
 }
 
-export default function LogView({ api, events }) {
-  const [state, setState] = useState(null)
-  const [log, setLog] = useState([])
-  const [connected, setConnected] = useState(true)
-  const [updated, setUpdated] = useState(null)
+export default function LogView({ warehouse, events, focus, onFocus }) {
+  const { state, log, connected, updated } = warehouse
   const [search, setSearch] = useState('')
   const [boardFilter, setBoardFilter] = useState('all')
   const [kind, setKind] = useState('all')
-  const [focus, setFocus] = useState(null)          // one DO's history only
-
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const [s, l] = await Promise.all([
-          fetch(`${api}/_debug/state`).then((r) => r.json()),
-          fetch(`${api}/runa/log?limit=300`).then((r) => (r.ok ? r.json() : [])),
-        ])
-        if (cancelled) return
-        setState(s)
-        setLog(Array.isArray(l) ? l : [])
-        setConnected(true)
-        setUpdated(new Date())
-      } catch {
-        if (!cancelled) setConnected(false)
-      }
-    }
-    load()
-    const timer = setInterval(load, 2000)
-    return () => { cancelled = true; clearInterval(timer) }
-  }, [api])
+  const setFocus = onFocus                           // one DO's history only
 
   const deliveries = useMemo(() => Object.values(state?.deliveries || {}), [state])
   const rows = useMemo(() => deliveries.map((d) => ({
     d, flags: flagsFor(d, state || {}, log), note: latestNote(d.InboundDelivery, log, events || []),
-    planned: (state?.change_log || []).find((c) => c.entity === `A_InboundDelivery('${d.InboundDelivery}')` && 'PlannedGoodsReceipt' in (c.changes || {}))?.before?.PlannedGoodsReceipt,
+    planned: originalPlan(d.InboundDelivery, state),
   })).sort((a, b) => (b.flags.length > 0) - (a.flags.length > 0)
     || STAGES.findIndex(([k]) => k === b.d.Stage) - STAGES.findIndex(([k]) => k === a.d.Stage)), [deliveries, state, log, events])
 

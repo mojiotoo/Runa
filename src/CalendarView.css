@@ -1,0 +1,125 @@
+/* Calendar tab, live from SAP. Builds on the calendar classes in App.css;
+   only what the live version adds or changes is here. */
+.cv-empty { padding: 28px; }
+
+.cv-widget-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cv-widget-head h3 { margin: 0; }
+.cv-arrows, .cv-nav { display: inline-flex; align-items: center; gap: 4px; }
+.console .cv-arrows button,
+.console .cv-nav button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.console .cv-arrows button:hover { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.console .cv-nav button:hover { background: rgba(255, 255, 255, 0.2); }
+.cv-nav strong { margin-left: 4px; }
+.console .cv-nav button.cv-today-btn {
+  width: auto;
+  height: 22px;
+  margin-left: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 11px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+.console .mini-calendar-grid button.cv-today:not(.selected-day) { box-shadow: inset 0 0 0 1.5px #19758e; }
+.console button.month-day.cv-today > b { color: #fff; background: #19758e; border-radius: 9px; padding: 0 5px; }
+
+.console .cv-link {
+  margin-top: 6px;
+  border: 0;
+  padding: 0;
+  color: #19758e;
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+.calendar-log span b { margin-right: 5px; }
+
+/* The time grid: 06:00 to 24:00, scrolls inside the board, headings stay. */
+.cv-scroll { max-height: min(470px, 56vh); overflow: auto; }
+.cv .schedule-grid { grid-template-rows: 44px var(--cv-height); }
+.cv .schedule-time-rail,
+.cv .schedule-day-column { height: var(--cv-height); }
+.cv .schedule-corner,
+.cv .schedule-day-heading {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  background: var(--panel);
+}
+.cv .schedule-corner { left: 0; z-index: 5; }
+.cv .schedule-time-rail { position: sticky; z-index: 3; left: 0; background: var(--panel); }
+.cv .schedule-time-rail span:first-child { transform: none; }
+
+.cv-extended { border-top-color: #c38bff; }
+.cv-extended em { color: #6a3aa8; }
+.cv-now {
+  position: absolute;
+  top: -8px;
+  left: 2px;
+  padding: 0 4px;
+  border-radius: 6px;
+  color: #fff;
+  background: #19758e;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.cv .calendar-event { padding: 4px 6px; line-height: 1.3; }
+.cv .calendar-event b { font-size: 10px; }
+.cv .calendar-event span { font-size: 9px; }
+.cv .calendar-event small { margin-top: 1px; font-size: 8px; }
+.cv .calendar-event.cv-done,
+.month-event.cv-done { opacity: 0.5; }
+.cv-ghost {
+  position: absolute;
+  z-index: 0;
+  right: 4px;
+  left: 4px;
+  overflow: hidden;
+  border: 1.5px dashed var(--mute);
+  border-radius: 9px;
+  padding: 4px 6px;
+  color: var(--mute);
+  font-size: 8px;
+  pointer-events: none;
+}
+.cv-ghost span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-planned::before { border: 1px dashed #fff; background: transparent !important; }
+
+/* Selected delivery */
+.cv .calendar-selection { align-items: flex-start; }
+.cv-sel { min-width: 0; }
+.cv-sel-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cv-sel-tags .lv-pill, .cv-sel-tags .lv-flag { margin: 0; }
+.cv-facts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0 4px !important; }
+.cv-facts span { display: inline-flex; gap: 5px; align-items: baseline; }
+.cv-facts small { color: var(--mute); font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; }
+.cv-facts em { color: var(--mute); font-style: normal; }
+.cv-sel-actions { display: flex; flex: 0 0 auto; flex-direction: column; gap: 6px; }
+.console .cv-secondary {
+  border: 1px solid #19758e;
+  border-radius: 11px;
+  padding: 7px 12px;
+  color: #19758e;
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .cv .calendar-selection { flex-direction: column; }
+  .cv-sel-actions { flex-direction: row; }
+}

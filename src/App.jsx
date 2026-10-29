@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import LogView from './LogView'
+import CalendarView from './CalendarView'
+import { useWarehouse, TODAY } from './warehouse'
 
 const EVENTS = [
   { id: 1, ts: '10:31', sender: 'Andi (Driver)', media: 'text', text: 'ok bos siap', decision: 'ignored', e: 0, v: 0, note: 'Bukan kejadian bisnis.' },
@@ -16,17 +18,6 @@ const DOCS = {
   '180000124': { po: '4500001240', sup: 'PT Kemas Jaya', plant: '1000', status: 'GR Discrepancy', eta: '30 Sep 14:00', reason: 'G001 GR discrepancy', items: [['10', 'Dus 20x20', '-20 PCS']], ev: 4 },
   '180000125': { po: '4500001251', sup: 'PT Sumber Makmur', plant: '1000', status: 'Received', eta: '01 Okt 10:50', reason: '-', items: [['10', 'Kardus 40x30', '300 PCS']], ev: 5 },
 }
-
-const SAP_SCHEDULES = [
-  { id: 'sap-1198', day: 28, start: 9, end: 10, title: 'Sinar Plastik', sub: 'PO 4500001198 - Dock A', type: 'scheduled' },
-  { id: 'sap-1210', day: 29, start: 11, end: 12, title: 'CV Dus Prima', sub: 'PO 4500001210 - Dock C', type: 'scheduled' },
-  { id: 'sap-1222', day: 30, start: 14, end: 15, title: 'PT Lem Nusantara', sub: 'PO 4500001222 - Dock A', type: 'scheduled' },
-  { id: 'sap-1245', day: 2, start: 9, end: 10.5, title: 'PT Kemas Jaya', sub: 'PO 4500001245 - Dock A', type: 'scheduled' },
-  { id: 'sap-1260', day: 2, start: 13, end: 14, title: 'Sinar Plastik', sub: 'PO 4500001260 - Dock B', type: 'scheduled' },
-  { id: 'sap-1270', day: 3, start: 10, end: 11, title: 'CV Dus Prima', sub: 'PO 4500001270 - Dock C', type: 'scheduled' },
-]
-
-const WEEK_DAYS = [[28, 'Sen'], [29, 'Sel'], [30, 'Rab'], [1, 'Kam'], [2, 'Jum'], [3, 'Sab']]
 
 const LABELS = { written: 'Written', asked: 'Asked', ignored: 'Ignored', conflict: 'Conflict', handoff: 'Handoff', undone: 'Undone' }
 
@@ -152,13 +143,11 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
   useEffect(() => () => clearInterval(timer.current), [timer])
 
   const count = (decision) => list.filter((event) => event.decision === decision).length
-  const calendarTodayCount = SAP_SCHEDULES.filter((entry) => entry.day === 1).length + Object.keys(DOCS).filter((docNumber) => {
-    const linkedEvents = list.filter((item) => item.doc === docNumber || item.resolved?.match(/\d{9}/)?.[0] === docNumber)
-    if (!linkedEvents.length) return false
-    const latest = linkedEvents.reduce((current, item) => item.id > current.id ? item : current)
-    if (latest.text.includes('besok 08:00')) return false
-    return Number(DOCS[docNumber].eta.match(/^(\d{1,2})/)?.[1]) === 1
-  }).length
+  const warehouse = useWarehouse(API)
+  const [logFocus, setLogFocus] = useState(null)   // the Log tab, showing one DO's history
+  const deliveries = Object.values(warehouse.state?.deliveries || {})
+  const calendarTodayCount = deliveries.filter((d) => d.PlannedGoodsReceipt?.startsWith(TODAY)).length
+  const runaUpdates = warehouse.log.filter((e) => ['sap', 'decision'].includes(e.kind)).length
   const replay = () => {
     setLive(false)
     clearInterval(timer.current)
@@ -270,7 +259,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
           </div>
           {tab === 'calendar' ? <div className="calendar-header-metrics">
             <span><small>Pengiriman hari ini</small><strong>{calendarTodayCount}</strong></span>
-            <span><small>Diperbarui oleh Runa</small><strong>{list.length}</strong></span>
+            <span><small>Diperbarui oleh Runa</small><strong>{runaUpdates}</strong></span>
             </div> : tab === 'log' ? null : <div className="header-actions">
               {!live && !playing && <button type="button" onClick={() => { setList([]); setLive(true) }}>Kembali ke live</button>}
               <button className="primary" type="button" onClick={replay} disabled={playing}>
@@ -280,7 +269,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
         </header>
 
         {tab === 'log' ? (
-          <LogView api={API} events={list} />
+          <LogView warehouse={warehouse} events={list} focus={logFocus} onFocus={setLogFocus} />
         ) : tab === 'notebook' ? (
           <main className="workspace stats-view">
             <section className="panel main-panel" aria-label="Notebook">
@@ -296,13 +285,12 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
         ) : tab === 'calendar' ? (
           <main className="workspace calendar-view">
             <section className="panel main-panel" aria-label="Calendar">
-              <CalendarDashboard
-                list={list}
+              <CalendarView
+                warehouse={warehouse}
+                events={list}
                 pending={pending}
-                conflicts={conflicts}
-                selectedEvent={selectedEvent}
-                onSelectEvent={setSelectedEvent}
                 onOpenConsole={(eventId, targetTab = 'document') => { setSelectedEvent(eventId); setTab('console'); setDetailTab(targetTab) }}
+                onOpenLog={(did) => { setLogFocus(did); setTab('log') }}
               />
             </section>
           </main>
@@ -364,187 +352,6 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
       </div>
     </div>
   )
-}
-
-function CalendarDashboard({ list, pending, conflicts, selectedEvent, onSelectEvent, onOpenConsole }) {
-  const [mode, setMode] = useState('week')
-  const [selectedDay, setSelectedDay] = useState(1)
-  const [activeEntryId, setActiveEntryId] = useState(null)
-  const [search, setSearch] = useState('')
-
-  const liveEntries = Object.keys(DOCS).flatMap((docNumber) => {
-    const relatedEvents = list.filter((event) => {
-      const linkedDoc = event.doc || event.resolved?.match(/\d{9}/)?.[0]
-      return linkedDoc === docNumber
-    })
-    if (!relatedEvents.length) return []
-
-    const latest = relatedEvents.reduce((current, event) => event.id > current.id ? event : current)
-    const details = DOCS[docNumber]
-    const eta = details.eta.match(/(\d{1,2})\s+(Sep|Okt)\s+(\d{2}):(\d{2})/)
-    let day = Number(eta?.[1] || 1)
-    let start = Number(eta?.[3] || 10) + Number(eta?.[4] || 0) / 60
-    if (latest.text.includes('besok 08:00')) {
-      day = 2
-      start = 8
-    }
-
-    return [{
-      id: `runa-${docNumber}`,
-      day,
-      start,
-      end: start + 1,
-      title: details.sup,
-      sub: `PO ${details.po} - Delivery ${docNumber}`,
-      type: conflicts.some((conflict) => conflict.id === latest.id) ? 'conflict' : latest.decision === 'asked' ? 'asked' : 'written',
-      doc: docNumber,
-      sourceEventId: latest.id,
-      sourceEventIds: relatedEvents.map((event) => event.id),
-      source: latest,
-    }]
-  })
-
-  const entries = [...SAP_SCHEDULES, ...liveEntries]
-  const searchMatches = search.trim()
-    ? entries.filter((entry) => entry.sourceEventId && `${entry.doc} ${entry.title} ${entry.sub} ${entry.source?.text || ''}`.toLowerCase().includes(search.trim().toLowerCase()))
-    : []
-  const selectedWeekDay = WEEK_DAYS.find(([day]) => day === selectedDay)
-  const weekdayLabels = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab']
-  const visibleDays = mode === 'day'
-    ? [selectedWeekDay || [selectedDay, weekdayLabels[new Date(2026, 9, selectedDay).getDay()]]]
-    : WEEK_DAYS
-  const selectedEntry = entries.find((entry) => entry.id === activeEntryId)
-    || entries.find((entry) => entry.sourceEventIds?.includes(selectedEvent))
-    || null
-  const monthDates = [28, 29, 30, ...Array.from({ length: 31 }, (_, index) => index + 1), 1]
-  const logEvents = [...list].filter((event) => event.doc || event.decision === 'conflict').slice(-5).reverse()
-  const timeLabels = Array.from({ length: 11 }, (_, index) => `${String(index + 8).padStart(2, '0')}:00`)
-
-  const selectEntry = (entry) => {
-    setActiveEntryId(entry.id)
-    if (entry.sourceEventId) onSelectEvent(entry.sourceEventId)
-  }
-
-  const entriesForDay = (day) => entries.filter((entry) => entry.day === day)
-
-  return (
-    <div className="calendar-page">
-      <form className="calendar-search" role="search" onSubmit={(submitEvent) => {
-        submitEvent.preventDefault()
-        if (searchMatches[0]) onOpenConsole(searchMatches[0].sourceEventId, 'reasoning')
-      }}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></svg>
-        <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari delivery, PO, supplier, atau isi pesan..." aria-label="Cari dokumen atau pesan" />
-        {search && <button type="button" className="clear-search" aria-label="Hapus pencarian" onClick={() => setSearch('')}>×</button>}
-        {search.trim() && <div className="calendar-search-results">
-          {searchMatches.length ? searchMatches.map((entry) => <button key={entry.id} type="button" className="calendar-search-result" onClick={() => onOpenConsole(entry.sourceEventId, 'reasoning')}>
-            <strong>{entry.doc}</strong><span>{entry.title} · {entry.sub}</span><small>Buka chat di Console</small>
-          </button>) : <p>Tidak ada dokumen atau pesan yang cocok.</p>}
-        </div>}
-      </form>
-
-      <div className="calendar-layout">
-        <aside className="calendar-sidebar">
-          <section className="calendar-widget mini-calendar-widget">
-            <h3>Oktober 2026</h3>
-            <div className="mini-calendar-grid">
-              {['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((day) => <span className="mini-weekday" key={day}>{day}</span>)}
-              {monthDates.map((day, index) => {
-                const outsideMonth = index < 3 || index === monthDates.length - 1
-                const hasEvents = !outsideMonth && entriesForDay(day).length > 0
-                return <button key={`${day}-${index}`} type="button" className={`${outsideMonth ? 'outside-month' : ''} ${day === selectedDay && !outsideMonth ? 'selected-day' : ''} ${hasEvents ? 'has-calendar-event' : ''}`} aria-pressed={day === selectedDay && !outsideMonth} onClick={() => { if (!outsideMonth) { setSelectedDay(day); setMode('day') } }} disabled={outsideMonth}>
-                  {day}{hasEvents && <i />}
-                </button>
-              })}
-            </div>
-          </section>
-
-          <section className="calendar-widget">
-            <h3>Perubahan oleh Runa</h3>
-            {logEvents.length ? logEvents.map((item) => <button className="calendar-log" key={item.id} onClick={() => onOpenConsole(item.id)}>
-              <i className={`log-dot ${item.decision}`} />
-              <span><b>{item.ts}</b> {item.text}</span>
-            </button>) : <p className="calendar-muted">Belum ada perubahan.</p>}
-          </section>
-
-          <section className="calendar-widget">
-            <h3>Perlu tindak lanjut</h3>
-            {pending.length === 0 && conflicts.length === 0 && <p className="calendar-muted">Tidak ada tugas tertunda.</p>}
-            {pending.map((item) => <button className="follow-up" key={item.id} onClick={() => onOpenConsole(item.id)}>
-              <i className="follow-check" />
-              <span>Konfirmasi PO ke {item.sender}</span>
-            </button>)}
-            {conflicts.map((item) => <button className="follow-up" key={item.id} onClick={() => onOpenConsole(item.id)}>
-              <i className="follow-check" />
-              <span>Putuskan konflik {item.resolved}</span>
-            </button>)}
-          </section>
-        </aside>
-
-        <div className="calendar-main">
-          <section className="calendar-board">
-            <div className="calendar-boardbar">
-              <strong>{mode === 'month' ? 'Oktober 2026' : mode === 'day' ? `${selectedDay} Okt 2026` : 'Minggu 28 Sep - 3 Okt 2026'}</strong>
-              <div className="calendar-legend">
-                {[['written', 'Ditulis Runa'], ['asked', 'Menunggu jawaban'], ['conflict', 'Konflik'], ['scheduled', 'Jadwal SAP']].map(([key, label]) => <span className={`legend-${key}`} key={key}>{label}</span>)}
-              </div>
-            </div>
-            <div className="calendar-view-switch" role="tablist" aria-label="Calendar view">
-              {[['day', 'Harian'], ['week', 'Mingguan'], ['month', 'Bulanan']].map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={mode === key} onClick={() => setMode(key)}>{label}</button>)}
-            </div>
-
-            {mode === 'month' ? <div className="calendar-month-grid">
-              {['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((day) => <span className="month-weekday" key={day}>{day}</span>)}
-              {monthDates.map((day, index) => {
-                const outsideMonth = index < 3 || index === monthDates.length - 1
-                const dayEntries = outsideMonth ? [] : entriesForDay(day)
-                return <button key={`${day}-${index}`} type="button" className={`month-day ${outsideMonth ? 'outside-month' : ''} ${day === selectedDay && !outsideMonth ? 'selected-day' : ''}`} onClick={() => { if (!outsideMonth) { setSelectedDay(day); setMode('day') } }} disabled={outsideMonth}>
-                  <b>{day}</b>
-                  {dayEntries.slice(0, 2).map((entry) => <span className={`month-event ${entry.type}`} key={entry.id}>{entry.title}</span>)}
-                  {dayEntries.length > 2 && <small>+{dayEntries.length - 2} lainnya</small>}
-                </button>
-              })}
-            </div> : <div className="calendar-scroll">
-              <div className="schedule-grid" style={{ '--calendar-day-count': visibleDays.length }}>
-                <div className="schedule-corner" />
-                {visibleDays.map(([day, name]) => <button key={day} type="button" className={`schedule-day-heading ${day === selectedDay ? 'current-day' : ''}`} onClick={() => { setSelectedDay(day); setMode('day') }}>
-                  <strong>{day}</strong><small>{name}</small>
-                </button>)}
-                <div className="schedule-time-rail">{timeLabels.map((time, index) => <span key={time} style={{ top: `${index * 48}px` }}>{time}</span>)}</div>
-                {visibleDays.map(([day]) => <div className="schedule-day-column" key={day}>
-                  {day === 1 && <>
-                    <div className="schedule-now-line" style={{ top: `${(10 + 52 / 60 - 8) * 48}px` }} />
-                    <div className="schedule-dock-line" style={{ top: `${(16 - 8) * 48}px` }}><em>Dock B tutup 16:00</em></div>
-                  </>}
-                  {entriesForDay(day).map((entry) => <button type="button" key={entry.id} className={`calendar-event ${entry.type} ${selectedEntry?.id === entry.id ? 'selected-event' : ''}`} style={{ top: `${(entry.start - 8) * 48 + 3}px`, height: `${Math.max(34, (entry.end - entry.start) * 48 - 6)}px` }} onClick={() => selectEntry(entry)}>
-                    <b>{entry.title}</b><span>{formatCalendarTime(entry.start)} - {formatCalendarTime(entry.end)}</span><small>{entry.sub}</small>
-                  </button>)}
-                </div>)}
-              </div>
-            </div>}
-          </section>
-
-          <section className="calendar-selection">
-            {selectedEntry ? <>
-              <div>
-                <span className={`calendar-status ${selectedEntry.type}`}>{selectedEntry.type === 'scheduled' ? 'Jadwal SAP' : LABELS[selectedEntry.type]}</span>
-                <h3>{selectedEntry.title}</h3>
-                <p>{selectedEntry.sub}</p>
-                {selectedEntry.source && <p className="calendar-muted">Sumber Runa: {selectedEntry.source.text}</p>}
-              </div>
-                {selectedEntry.sourceEventId && <button type="button" className="calendar-open-detail" onClick={() => onOpenConsole(selectedEntry.sourceEventId, 'document')}>Buka detail</button>}
-            </> : <p className="calendar-muted">Pilih jadwal untuk melihat detail dan sumber perubahan.</p>}
-          </section>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function formatCalendarTime(value) {
-  const hours = Math.floor(value)
-  const minutes = Math.round((value - hours) * 60)
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
 }
 
 function StatsDashboard({ list, counts, conflicts }) {
