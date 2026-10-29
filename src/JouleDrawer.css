@@ -1,0 +1,151 @@
+/* Joule drawer: slides in from the right, over any tab. */
+.jd-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(20, 24, 40, 0.28);
+}
+.jd {
+  display: flex;
+  width: min(440px, 100vw);
+  height: 100%;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  color: var(--ink);
+  background: var(--panel);
+  box-shadow: -12px 0 40px rgba(20, 24, 40, 0.18);
+  animation: jd-in 180ms ease-out;
+}
+@keyframes jd-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.jd-head { display: flex; align-items: center; gap: 10px; }
+.jd-head div { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.jd-head strong { font-size: 15px; }
+.jd-head small { color: var(--mute); font-size: 11px; }
+.jd-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 10px;
+  color: #fff;
+  background: linear-gradient(135deg, #5b3fd6, #19758e);
+}
+.jd-mark svg { width: 20px; height: 20px; }
+.console .jd-close, .jd-close {
+  border: 0;
+  padding: 0 4px;
+  color: var(--mute);
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.jd-open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #5b3fd6 9%, var(--panel));
+  color: var(--mute);
+  font-size: 11px;
+}
+.console .jd-primary, .jd-primary {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: #fff;
+  background: #5b3fd6;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.jd-feed { display: flex; flex: 1; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; padding: 2px; }
+.jd-intro p { margin: 4px 0 10px; color: var(--mute); font-size: 12px; line-height: 1.45; }
+.jd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.console .jd-chips button, .jd-chips button {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 5px 10px;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.jd-chips button:disabled { opacity: 0.5; cursor: default; }
+.jd-chips-foot { margin-top: -2px; }
+
+.jd-turn { display: flex; flex-direction: column; gap: 6px; }
+.jd-q {
+  align-self: flex-end;
+  max-width: 85%;
+  border-radius: 14px 14px 4px 14px;
+  padding: 7px 11px;
+  color: #fff;
+  background: #19758e;
+  font-size: 12px;
+}
+.jd-answer, .jd-wait, .jd-error {
+  align-self: flex-start;
+  max-width: 94%;
+  border-radius: 14px 14px 14px 4px;
+  padding: 9px 12px;
+  background: var(--selected);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.jd-answer b { font-weight: 600; }
+.jd-item { position: relative; }
+.jd-item::before { position: absolute; margin-left: -9px; content: '•'; color: var(--mute); }
+.jd-gap { height: 6px; }
+.jd-wait { color: var(--mute); font-style: italic; }
+.jd-error { color: var(--bad); }
+
+.jd-ask { display: flex; gap: 6px; }
+.jd-ask input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  color: var(--ink);
+  background: var(--panel);
+  font: inherit;
+  font-size: 12px;
+}
+.console .jd-ask button, .jd-ask button {
+  border: 0;
+  border-radius: 10px;
+  padding: 0 14px;
+  color: #fff;
+  background: #19758e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.jd-ask button:disabled { opacity: 0.5; cursor: default; }
+
+/* The Joule button in the sidebar, under the tabs. */
+.side-extra { padding-top: 8px; border-top: 1px solid var(--line); }
+.console .side-extra button { color: #5b3fd6; }
+.joule-icon { color: #5b3fd6; }
+.console .calendar-ask-joule {
+  border: 1px solid #5b3fd6;
+  border-radius: 11px;
+  padding: 7px 12px;
+  color: #5b3fd6;
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}

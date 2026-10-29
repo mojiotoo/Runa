@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import LogView from './LogView'
 import CalendarView from './CalendarView'
+import JouleDrawer from './JouleDrawer'
 import { useWarehouse, TODAY } from './warehouse'
 
 const EVENTS = [
@@ -64,6 +65,7 @@ function TabIcon({ name }) {
     stats: <><path d="M4 19V5M4 19h16" /><path d="M8 15v-4M12 15V7M16 15V9" /></>,
     notebook: <><path d="M6 3.5h11a1 1 0 0 1 1 1V20.5H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 1-2z" /><path d="M5 18.5a2 2 0 0 1 2-2h11M9 8h6M9 11.5h4" /></>,
     log: <><path d="M8 6h12M8 12h12M8 18h12" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></>,
+    joule: <><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" /></>,
   }
 
   return <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
@@ -145,6 +147,9 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
   const count = (decision) => list.filter((event) => event.decision === decision).length
   const warehouse = useWarehouse(API)
   const [logFocus, setLogFocus] = useState(null)   // the Log tab, showing one DO's history
+  const [jouleOpen, setJouleOpen] = useState(false)
+  const [joulePrompt, setJoulePrompt] = useState(null)   // a question to ask as soon as it opens
+  const askJoule = (text) => { if (text) setJoulePrompt({ id: Date.now(), text }); setJouleOpen(true) }
   const deliveries = Object.values(warehouse.state?.deliveries || {})
   const calendarTodayCount = deliveries.filter((d) => d.PlannedGoodsReceipt?.startsWith(TODAY)).length
   const runaUpdates = warehouse.log.filter((e) => ['sap', 'decision'].includes(e.kind)).length
@@ -239,6 +244,12 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
             </button>
           ))}
         </nav>
+        <div className="side-nav side-extra">
+          <button type="button" onClick={() => askJoule(null)} aria-haspopup="dialog">
+            <TabIcon name="joule" />
+            <span>Tanya Joule</span>
+          </button>
+        </div>
         <section className="telegram-status" aria-label={`Koneksi Telegram ${telegramConnected ? 'aktif' : 'terputus'}`}>
           <span className={`connection-indicator ${telegramConnected ? 'connected' : 'disconnected'}`} role="status" aria-label={telegramConnected ? 'Terhubung' : 'Tidak terhubung'} />
           <span className="telegram-icon" aria-hidden="true">
@@ -291,6 +302,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
                 pending={pending}
                 onOpenConsole={(eventId, targetTab = 'document') => { setSelectedEvent(eventId); setTab('console'); setDetailTab(targetTab) }}
                 onOpenLog={(did) => { setLogFocus(did); setTab('log') }}
+                onAskJoule={askJoule}
               />
             </section>
           </main>
@@ -350,6 +362,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
           </main>
         )}
       </div>
+      <JouleDrawer api={API} open={jouleOpen} onClose={() => setJouleOpen(false)} prompt={joulePrompt} />
     </div>
   )
 }

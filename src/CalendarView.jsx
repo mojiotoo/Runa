@@ -86,7 +86,7 @@ function changeText(entry) {
   return entry.kind === 'decision' ? `${did} · opsi ${entry.source?.option || ''}: ${what}` : `${did} · ${what}`
 }
 
-export default function CalendarView({ warehouse, events, pending, onOpenConsole, onOpenLog }) {
+export default function CalendarView({ warehouse, events, pending, onOpenConsole, onOpenLog, onAskJoule }) {
   const { state, log, connected } = warehouse
   const [mode, setMode] = useState('week')
   const [picked, setSelected] = useState(null)   // null: follow today
@@ -322,6 +322,7 @@ export default function CalendarView({ warehouse, events, pending, onOpenConsole
               </div>
               <div className="cv-sel-actions">
                 <button type="button" className="calendar-open-detail" onClick={() => onOpenLog(selectedEntry.id)}>Lihat riwayat</button>
+                {onAskJoule && <button type="button" className="calendar-ask-joule" onClick={() => onAskJoule(`Bagaimana DO ${short(selectedEntry.id)}?`)}>Tanya Joule</button>}
                 {selectedEntry.sourceEventId && <button type="button" className="cv-secondary" onClick={() => onOpenConsole(selectedEntry.sourceEventId, 'reasoning')}>Buka chat</button>}
               </div>
             </> : <p className="calendar-muted">Pilih jadwal untuk melihat detail delivery dan pesan yang mengubahnya.</p>}
