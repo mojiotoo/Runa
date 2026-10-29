@@ -1820,3 +1820,14 @@ tbody tr:hover td,
   font-size: 12px;
   opacity: 0.7;
 }
+
+/* The logo goes back to the front page. */
+.console button.brand-home {
+  border: 0;
+  background: transparent;
+  color: #64c7c2;
+  font-size: 32px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}

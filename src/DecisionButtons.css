@@ -1,0 +1,76 @@
+/* Option buttons on a dock conflict (Console, "Perlu tindakan"). */
+.decision { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.decision-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.console .action-options .decision-options button {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--bad) 38%, transparent);
+  border-radius: 12px;
+  padding: 9px 11px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.8);
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.console .action-options .decision-options button b {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--bad);
+  font-size: 11px;
+}
+.console .action-options .decision-options button:hover { border-color: var(--bad); }
+.console .action-options .decision-options button.on { border-color: #19758e; box-shadow: 0 0 0 2px #19758e inset; }
+.console .action-options .decision-options button.on b { background: #19758e; }
+.decision-confirm { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.decision-confirm label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--mute); }
+.decision-confirm input {
+  width: 150px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 10px;
+  color: var(--ink);
+  background: var(--panel);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+}
+.console .action-options .decision-go {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 14px;
+  color: #fff;
+  background: #19758e;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.console .action-options .decision-go:disabled { opacity: 0.6; }
+.console .action-options .decision-cancel { border: 0; padding: 8px 6px; color: var(--mute); background: transparent; font-size: 12px; cursor: pointer; }
+.decision-error { margin: 0; color: var(--bad); font-size: 12px; }
+.decision-note { color: var(--mute); font-size: 11px; }
+.decision-wait { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #19758e; }
+.decision-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, #19758e 25%, transparent);
+  border-top-color: #19758e;
+  border-radius: 50%;
+  animation: decision-spin 800ms linear infinite;
+}
+@keyframes decision-spin { to { transform: rotate(360deg); } }
+
+/* A long escalation message: the problem in bold, the reasons under it. */
+.action-detail { margin: 6px 0 0; font-size: 12px; line-height: 1.5; white-space: pre-line; color: var(--ink); }
+.action-detail.clamped { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.console .action-more { margin-top: 2px; border: 0; padding: 0; color: #19758e; background: transparent; font-size: 11px; cursor: pointer; }
+.console .action-options .decision-options button:hover { color: var(--ink); background: rgba(255, 255, 255, 0.95); }
+.console .action-options .decision-go:hover { color: #fff; background: #135f74; }
+.console .action-options .decision-cancel:hover { color: var(--ink); background: transparent; }

@@ -3,6 +3,8 @@ import './App.css'
 import LogView from './LogView'
 import CalendarView from './CalendarView'
 import JouleDrawer from './JouleDrawer'
+import DecisionButtons from './DecisionButtons'
+import Hero from './Hero'
 import { useWarehouse, TODAY } from './warehouse'
 
 const EVENTS = [
@@ -86,6 +88,9 @@ function ScoreBar({ label, value }) {
 function App() {
   const [list, setList] = useState([])
   const [tab, setTab] = useState('console')
+  // The front page (hero) first; "#app" in the address goes straight to the dashboard.
+  const [home, setHome] = useState(() => !window.location.hash || window.location.hash === '#home')
+  const [jouleOnOpen, setJouleOnOpen] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [playing, setPlaying] = useState(false)
   const [live, setLive] = useState(true)
@@ -117,8 +122,20 @@ function App() {
     return () => {cancelled = true; clearInterval(timer)}
   }, [live])
 
+  const enter = (target, joule = false) => {
+    setTab(target)
+    setJouleOnOpen(joule)
+    setHome(false)
+    try { window.history.replaceState(null, '', '#app') } catch { /* sandboxed */ }
+  }
+  if (home) {
+    return <Hero api={API} onEnter={(target) => enter(target)} onAskJoule={() => enter('console', true)} />
+  }
+
   return (
     <Console
+      onHome={() => { setHome(true); try { window.history.replaceState(null, '', '#home') } catch { /* sandboxed */ } }}
+      jouleOnOpen={jouleOnOpen}
       list={list}
       setList={setList}
       tab={tab}
@@ -135,7 +152,20 @@ function App() {
   )
 }
 
-function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected, notes }) {
+// A long escalation from Runa: the problem in bold, the reasons folded under it.
+function ConflictText({ text }) {
+  const [open, setOpen] = useState(false)
+  const [first, ...rest] = (text || '').split('\n')
+  const detail = rest.join('\n').trim()
+  const long = detail.length > 220
+  return <>
+    <strong>{first}</strong>
+    {detail && <p className={`action-detail ${long && !open ? 'clamped' : ''}`}>{detail}</p>}
+    {long && <button type="button" className="action-more" onClick={() => setOpen(!open)}>{open ? 'Ringkas' : 'Lihat semua alasan'}</button>}
+  </>
+}
+
+function Console({ onHome, jouleOnOpen, list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected, notes }) {
   const timer = useRef(null)
   const telegramConnected = live ? connected : true
   const [filter, setFilter] = useState('all')
@@ -147,7 +177,7 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
   const count = (decision) => list.filter((event) => event.decision === decision).length
   const warehouse = useWarehouse(API)
   const [logFocus, setLogFocus] = useState(null)   // the Log tab, showing one DO's history
-  const [jouleOpen, setJouleOpen] = useState(false)
+  const [jouleOpen, setJouleOpen] = useState(Boolean(jouleOnOpen))
   const [joulePrompt, setJoulePrompt] = useState(null)   // a question to ask as soon as it opens
   const askJoule = (text) => { if (text) setJoulePrompt({ id: Date.now(), text }); setJouleOpen(true) }
   const deliveries = Object.values(warehouse.state?.deliveries || {})
@@ -230,10 +260,10 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
   return (
     <div className="console">
       <aside className="sidebar">
-        <div className="brand">
+        <button type="button" className="brand brand-home" onClick={onHome} title="Halaman depan">
           <img src="/logo.png" alt="" className="brand-logo" />
           <span>Runa</span>
-        </div>
+        </button>
         {/* <div className="side-caption">WORKSPACE</div> */}
         <nav className="side-nav" role="tablist" aria-label="Runa views">
           {tabs.map(([key, label, count]) => (
@@ -316,11 +346,11 @@ function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, 
                   <span>{item.q}</span>
                 </button>)}
                 {conflicts.map((item) => <article className="action-card action-conflict" key={item.id}>
-                  <strong>{item.text}</strong>
+                  <ConflictText text={item.text} />
                   <span>{item.opts ? `${item.resolved}. Pilih penyelesaian:` : `DO ${item.resolved}`}</span>
                   <div className="action-options">{item.opts
                     ? item.opts.map((option) => <button key={option} type="button" onClick={() => resolveConflict(item, option)}>{option}</button>)
-                    : <em>Menunggu supervisor membalas "opsi a" atau "opsi b" di Telegram.</em>}</div>
+                    : <DecisionButtons api={API} decision={warehouse.state?.decision?.delivery === item.resolved ? warehouse.state.decision : null} />}</div>
                 </article>)}
                 {handoffs.map((item) => <article className="action-card action-handoff" key={item.id}>
                   <strong>Diteruskan ke supervisor: pesan dari {item.sender}</strong>
