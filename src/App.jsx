@@ -4,7 +4,6 @@ import LogView from './LogView'
 import CalendarView from './CalendarView'
 import JouleDrawer from './JouleDrawer'
 import DecisionButtons from './DecisionButtons'
-import Hero from './Hero'
 import { useWarehouse, TODAY } from './warehouse'
 
 const EVENTS = [
@@ -88,9 +87,6 @@ function ScoreBar({ label, value }) {
 function App() {
   const [list, setList] = useState([])
   const [tab, setTab] = useState('console')
-  // The front page (hero) first; "#app" in the address goes straight to the dashboard.
-  const [home, setHome] = useState(() => !window.location.hash || window.location.hash === '#home')
-  const [jouleOnOpen, setJouleOnOpen] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [playing, setPlaying] = useState(false)
   const [live, setLive] = useState(true)
@@ -122,20 +118,8 @@ function App() {
     return () => {cancelled = true; clearInterval(timer)}
   }, [live])
 
-  const enter = (target, joule = false) => {
-    setTab(target)
-    setJouleOnOpen(joule)
-    setHome(false)
-    try { window.history.replaceState(null, '', '#app') } catch { /* sandboxed */ }
-  }
-  if (home) {
-    return <Hero api={API} onEnter={(target) => enter(target)} onAskJoule={() => enter('console', true)} />
-  }
-
   return (
     <Console
-      onHome={() => { setHome(true); try { window.history.replaceState(null, '', '#home') } catch { /* sandboxed */ } }}
-      jouleOnOpen={jouleOnOpen}
       list={list}
       setList={setList}
       tab={tab}
@@ -165,7 +149,7 @@ function ConflictText({ text }) {
   </>
 }
 
-function Console({ onHome, jouleOnOpen, list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected, notes }) {
+function Console({ list, setList, tab, setTab, selectedEvent, setSelectedEvent, playing, setPlaying, live, setLive, connected, notes }) {
   const timer = useRef(null)
   const telegramConnected = live ? connected : true
   const [filter, setFilter] = useState('all')
@@ -177,7 +161,7 @@ function Console({ onHome, jouleOnOpen, list, setList, tab, setTab, selectedEven
   const count = (decision) => list.filter((event) => event.decision === decision).length
   const warehouse = useWarehouse(API)
   const [logFocus, setLogFocus] = useState(null)   // the Log tab, showing one DO's history
-  const [jouleOpen, setJouleOpen] = useState(Boolean(jouleOnOpen))
+  const [jouleOpen, setJouleOpen] = useState(false)
   const [joulePrompt, setJoulePrompt] = useState(null)   // a question to ask as soon as it opens
   const askJoule = (text) => { if (text) setJoulePrompt({ id: Date.now(), text }); setJouleOpen(true) }
   const deliveries = Object.values(warehouse.state?.deliveries || {})
@@ -260,10 +244,10 @@ function Console({ onHome, jouleOnOpen, list, setList, tab, setTab, selectedEven
   return (
     <div className="console">
       <aside className="sidebar">
-        <button type="button" className="brand brand-home" onClick={onHome} title="Halaman depan">
+        <div className="brand">
           <img src="/logo.png" alt="" className="brand-logo" />
           <span>Runa</span>
-        </button>
+        </div>
         {/* <div className="side-caption">WORKSPACE</div> */}
         <nav className="side-nav" role="tablist" aria-label="Runa views">
           {tabs.map(([key, label, count]) => (
